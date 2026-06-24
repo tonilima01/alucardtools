@@ -1,0 +1,1 @@
+Arquivos da classe magician. Extraia na mesma pasta do projeto base.
