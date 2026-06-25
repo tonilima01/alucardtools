@@ -18,8 +18,8 @@ interface FileEntry {
   ext: string;
 }
 
-type CategoryFilter = "all" | "showcase" | "weapons" | "shields" | "wings" | "armor" | "textures" | "other";
-type ModelKind = Exclude<CategoryFilter, "all" | "textures">;
+type CategoryFilter = "all" | "showcase" | "attack" | "defense" | "hair" | "wings" | "costume" | "other";
+type ModelKind = Exclude<CategoryFilter, "all" | "showcase">;
 
 interface ModelProfile {
   kind: ModelKind;
@@ -27,6 +27,7 @@ interface ModelProfile {
   badge: string;
   showcaseReady: boolean;
   note: string;
+  action: string;
 }
 
 interface ImportState {
@@ -36,15 +37,18 @@ interface ImportState {
   detail: string;
 }
 
-const FILTERS: Array<{ id: CategoryFilter; label: string }> = [
-  { id: "all", label: "Todos" },
-  { id: "showcase", label: "Showcase OK" },
-  { id: "weapons", label: "Armas" },
-  { id: "shields", label: "Escudos" },
-  { id: "wings", label: "Asas" },
-  { id: "armor", label: "Armaduras" },
-  { id: "other", label: "Outros" },
+const FILTERS: Array<{ id: CategoryFilter; label: string; hint: string }> = [
+  { id: "all", label: "Todos", hint: "Todos os SMD" },
+  { id: "showcase", label: "Catálogo", hint: "Modelos bons para preview" },
+  { id: "attack", label: "Ataque", hint: "Armas: sword, axe, bow, staff..." },
+  { id: "defense", label: "Defesa", hint: "Escudos, armaduras, botas, luvas" },
+  { id: "hair", label: "Hair/Mask", hint: "Cabelo, máscara, capacete visual" },
+  { id: "wings", label: "Asas", hint: "Asas, capas e costas" },
+  { id: "costume", label: "Skins", hint: "Costume, set visual, roupas" },
+  { id: "other", label: "Outros", hint: "Modelos não classificados" },
 ];
+
+const TEXTURE_EXTENSIONS = ["bmp", "tga", "dds", "png", "jpg", "jpeg"];
 
 function fileExt(fileName: string): string {
   return fileName.split(".").pop()?.toLowerCase() ?? "";
@@ -81,74 +85,100 @@ function readableSize(bytes: number): string {
 }
 
 function isTextureExt(ext: string): boolean {
-  return ["bmp", "tga", "dds", "png", "jpg", "jpeg"].includes(ext);
+  return TEXTURE_EXTENSIONS.includes(ext);
 }
 
 function stem(name: string): string {
   return name.replace(/\\/g, "/").split("/").pop()?.replace(/\.[^.]+$/, "").toLowerCase() ?? "";
 }
 
+function cleanName(name: string): string {
+  return stem(name).replace(/[^a-z0-9]/g, "");
+}
+
 function getProfile(entry: FileEntry): ModelProfile {
   const s = stem(entry.name);
+  const compact = cleanName(entry.name);
 
-  if (/(shield|shl|escudo)/i.test(s)) {
+  // Armas / itens de ataque. Cobre a convenção comum do PT: itW* / itws / itwa / itwp / etc.
+  if (/^(itw|ws|wa|wp|wm|wb|wj|wd|wc|wh)/i.test(compact)
+    || /(weapon|sword|axe|bow|arco|javelin|staff|wand|dagger|claw|hammer|orb|pike|spear|mace|blade|scythe|foice|phantom|crossbow|gun|arma)/i.test(s)) {
     return {
-      kind: "shields",
-      label: "Escudo",
-      badge: "Showcase OK",
+      kind: "attack",
+      label: "Item de ataque",
+      badge: "Ataque",
       showcaseReady: true,
-      note: "Bom para catálogo: carregue o .smd junto com as texturas e use Showcase + Textura.",
+      note: "Modelo ideal para Showcase: arma isolada, giro automático, textura ligada e exportação PNG.",
+      action: "Use Showcase + Textura + Centralizar.",
     };
   }
 
-  if (/(wing|asa|back|costas|cape|manto)/i.test(s)) {
+  // Hair, máscara e capacetes visuais antes de defesa, para não cair como armor.
+  if (/(hair|hairs|mask|msk|cap|hat|head|cabelo|face|helmetvisual|hs\b|hairs)/i.test(s)) {
+    return {
+      kind: "hair",
+      label: "Hair / máscara",
+      badge: "Hair",
+      showcaseReady: true,
+      note: "Bom para preview de visual de cabeça. Se aparecer pequeno, use Centralizar e ajuste zoom.",
+      action: "Bom para catálogo de visual/hair.",
+    };
+  }
+
+  if (/(wing|asa|back|costas|cape|manto|cloak)/i.test(s)) {
     return {
       kind: "wings",
-      label: "Asa / visual de costas",
-      badge: "Showcase OK",
+      label: "Asa / costas",
+      badge: "Asa",
       showcaseReady: true,
-      note: "Ideal para preview rotativo e exportação PNG.",
+      note: "Ideal para preview grande, rotação e exportação PNG.",
+      action: "Use Auto giro e fundo escuro.",
     };
   }
 
-  if (/(itwa|weapon|sword|axe|bow|arco|javelin|staff|wand|dagger|claw|hammer|orb|arma)/i.test(s)) {
+  // Defesa: itD* costuma ser visual/defesa. Inclui escudo, armor, boots, gloves etc.
+  if (/^(itd|ds|da|db|dg|df|dm|dr|dh)/i.test(compact)
+    || /(shield|shl|escudo|armor|armou?r|robe|dress|body|chest|boot|boots|glove|gaunt|defense|defesa|helm|helmet|bracelet|ring|amulet)/i.test(s)) {
     return {
-      kind: "weapons",
-      label: "Arma",
-      badge: "Showcase OK",
+      kind: "defense",
+      label: "Item de defesa",
+      badge: "Defesa",
       showcaseReady: true,
-      note: "Modelo isolado; use Eixo PT se aparecer deitado ou invertido.",
+      note: "Escudo, armor, bota, luva ou parte defensiva. Para armaduras completas, o preview é isolado; personagem montado exige loader do client.",
+      action: "Bom para checar textura e forma do item.",
     };
   }
 
-  if (/(armor|armou?r|robe|dress|costume|armor-|itda|itdb|body|chest|helmet|helm|hair|mask|cap)/i.test(s)) {
+  if (/(costume|skin|visual|xmas|santa|lpk|dragon|swim|wedding|hanbok|kimono|school|uniform|magic|inferno|traje|wc|brazil|argnt|franc|japan|pinoy|peru|spain|italy|chile|mexic|soldier)/i.test(s)) {
     return {
-      kind: "armor",
-      label: "Armadura / parte visual",
-      badge: "Requer teste",
+      kind: "costume",
+      label: "Skin / costume",
+      badge: "Skin",
       showcaseReady: true,
-      note: "Funciona como preview isolado. Personagem completo ainda depende do loader real do PristonTale.",
+      note: "Funciona como peça isolada. Se for parte de personagem, pode precisar da montagem real do PristonTale.",
+      action: "Use como preview de peça ou diagnóstico.",
     };
   }
 
   return {
     kind: "other",
     label: "Modelo SMD",
-    badge: "Showcase OK",
+    badge: "Showcase",
     showcaseReady: true,
-    note: "Modelo genérico. Se a textura não aparecer, confira se BMP/TGA/DDS está na mesma importação.",
+    note: "Modelo genérico. Se a textura não aparecer, importe também BMP/TGA/DDS/PNG com o mesmo nome ou nome esperado pelo SMD.",
+    action: "Use busca por nome e painel de textura.",
   };
 }
 
-function countByFilter(models: FileEntry[], assets: FileEntry[]) {
+function countByFilter(models: FileEntry[]) {
   const base: Record<CategoryFilter, number> = {
     all: models.length,
     showcase: 0,
-    weapons: 0,
-    shields: 0,
+    attack: 0,
+    defense: 0,
+    hair: 0,
     wings: 0,
-    armor: 0,
-    textures: assets.length,
+    costume: 0,
     other: 0,
   };
 
@@ -161,12 +191,21 @@ function countByFilter(models: FileEntry[], assets: FileEntry[]) {
   return base;
 }
 
+function countTexturesByExt(entries: FileEntry[]) {
+  const out: Record<string, number> = { bmp: 0, tga: 0, dds: 0, png: 0, jpg: 0 };
+  for (const entry of entries) {
+    if (entry.ext === "jpeg") out.jpg += 1;
+    else if (entry.ext in out) out[entry.ext] += 1;
+  }
+  return out;
+}
+
 export default function App() {
   const [smdFiles, setSmdFiles] = useState<FileEntry[]>([]);
   const [assetFiles, setAssetFiles] = useState<FileEntry[]>([]);
   const [selectedId, setSelectedId] = useState("");
   const [query, setQuery] = useState("");
-  const [filter, setFilter] = useState<CategoryFilter>("all");
+  const [filter, setFilter] = useState<CategoryFilter>("showcase");
   const [dragging, setDragging] = useState(false);
   const [importState, setImportState] = useState<ImportState>({
     active: false,
@@ -178,25 +217,36 @@ export default function App() {
   const selectedModel = smdFiles.find(entry => entry.id === selectedId) ?? smdFiles[0] ?? null;
   const selectedProfile = selectedModel ? getProfile(selectedModel) : null;
   const textureFiles = assetFiles.filter(entry => isTextureExt(entry.ext));
-  const counts = useMemo(() => countByFilter(smdFiles, assetFiles), [smdFiles, assetFiles]);
+  const counts = useMemo(() => countByFilter(smdFiles), [smdFiles]);
+  const textureStats = useMemo(() => countTexturesByExt(textureFiles), [textureFiles]);
   const viewerAssets = useMemo(() => assetFiles.map(entry => entry.file), [assetFiles]);
 
   const filteredModels = useMemo(() => {
     const q = query.trim().toLowerCase();
     return smdFiles.filter(entry => {
       const profile = getProfile(entry);
-      const matchesQuery = !q || entry.path.toLowerCase().includes(q) || entry.name.toLowerCase().includes(q);
+      const matchesQuery = !q
+        || entry.path.toLowerCase().includes(q)
+        || entry.name.toLowerCase().includes(q)
+        || profile.label.toLowerCase().includes(q)
+        || profile.kind.toLowerCase().includes(q);
       const matchesFilter = filter === "all"
         || (filter === "showcase" ? profile.showcaseReady : profile.kind === filter);
       return matchesQuery && matchesFilter;
     });
   }, [filter, query, smdFiles]);
 
+  const displayedModels = useMemo(() => filteredModels.slice(0, 240), [filteredModels]);
+  const hiddenModelCount = Math.max(0, filteredModels.length - displayedModels.length);
+
   const selectedTextureHint = useMemo(() => {
     if (!selectedModel) return null;
-    const modelBase = stem(selectedModel.name);
-    const exact = textureFiles.find(entry => stem(entry.name) === modelBase);
-    const partial = textureFiles.find(entry => stem(entry.name).includes(modelBase) || modelBase.includes(stem(entry.name)));
+    const modelBase = cleanName(selectedModel.name);
+    const exact = textureFiles.find(entry => cleanName(entry.name) === modelBase);
+    const partial = textureFiles.find(entry => {
+      const assetBase = cleanName(entry.name);
+      return assetBase.includes(modelBase) || modelBase.includes(assetBase);
+    });
     return exact ?? partial ?? null;
   }, [selectedModel, textureFiles]);
 
@@ -207,8 +257,8 @@ export default function App() {
     setImportState({
       active: true,
       progress: 3,
-      title: "Indexando biblioteca PristonTale",
-      detail: "Lendo arquivos locais. Nada é enviado ao servidor.",
+      title: "Indexando biblioteca do cliente",
+      detail: "Lendo SMD, BMP, TGA, DDS e PNG localmente. Nada é enviado ao servidor.",
     });
 
     const entries: FileEntry[] = [];
@@ -220,7 +270,7 @@ export default function App() {
       setImportState({
         active: true,
         progress,
-        title: "Indexando biblioteca PristonTale",
+        title: "Indexando biblioteca do cliente",
         detail: `${Math.min(index + chunk.length, fileArray.length).toLocaleString()} de ${fileArray.length.toLocaleString()} arquivos analisados`,
       });
       await new Promise(resolve => window.setTimeout(resolve, 0));
@@ -252,7 +302,7 @@ export default function App() {
     setAssetFiles([]);
     setSelectedId("");
     setQuery("");
-    setFilter("all");
+    setFilter("showcase");
   }
 
   async function loadDemo() {
@@ -266,26 +316,26 @@ export default function App() {
       setAssetFiles([toEntry(texture)]);
       setSelectedId(smdEntry.id);
       setQuery("");
-      setFilter("all");
+      setFilter("showcase");
     } catch {
       alert("Não foi possível carregar o exemplo embutido.");
     }
   }
 
   return (
-    <div className="app-shell studio-shell">
+    <div className="app-shell studio-shell professional-shell">
       <header className="topbar studio-header">
         <div className="brand-block">
           <span className="brand-mark">AT</span>
           <div>
             <h1>ALUCARD-TOOLS</h1>
-            <p>Showcase profissional para arquivos SMD do PristonTale</p>
+            <p>Showcase profissional para SMD do PristonTale · leitura local no navegador</p>
           </div>
         </div>
 
         <div className="top-actions">
           <label className="action-button primary">
-            Abrir pasta do cliente
+            Abrir tmABCD / pasta do cliente
             <FolderInput
               type="file"
               webkitdirectory=""
@@ -326,65 +376,73 @@ export default function App() {
           void processFiles(event.dataTransfer.files);
         }}
       >
-        <aside className="studio-left">
+        <aside className="studio-left professional-left">
           <section className="stat-grid compact-stats">
-            <div><strong>{smdFiles.length}</strong><span>modelos SMD</span></div>
-            <div><strong>{textureFiles.length}</strong><span>texturas</span></div>
+            <div><strong>{smdFiles.length.toLocaleString()}</strong><span>modelos SMD</span></div>
+            <div><strong>{textureFiles.length.toLocaleString()}</strong><span>texturas</span></div>
           </section>
 
-          <section className="panel upload-guide">
+          <section className="panel upload-guide professional-guide">
             <div className="panel-title-row">
-              <h2>Fluxo do cliente</h2>
-              <span>3 passos</span>
+              <h2>Fluxo correto</h2>
+              <span>local</span>
             </div>
-            <ol>
-              <li>Enviar o <strong>.smd</strong> do item.</li>
-              <li>Enviar junto <strong>.bmp/.tga/.dds</strong>.</li>
-              <li>Conferir no Showcase e exportar PNG.</li>
-            </ol>
+            <div className="guide-steps">
+              <div><strong>1</strong><span>Abrir a pasta <b>tmABCD</b> ou uma pasta do item.</span></div>
+              <div><strong>2</strong><span>Buscar por código: <b>itws</b>, <b>itda</b>, <b>hair</b>, <b>shield</b>.</span></div>
+              <div><strong>3</strong><span>Usar Showcase + Textura + Centralizar e exportar PNG.</span></div>
+            </div>
+            <p className="privacy-note">SMD, BMP, TGA, DDS, PNG e JPG são lidos no navegador. Nada é enviado ao servidor.</p>
           </section>
 
-          <section className="panel library-panel">
+          <section className="panel library-panel professional-library">
             <div className="panel-title-row">
-              <h2>Biblioteca SMD</h2>
-              <span>{filteredModels.length}/{smdFiles.length}</span>
+              <h2>Biblioteca do cliente</h2>
+              <span>{filteredModels.length.toLocaleString()}/{smdFiles.length.toLocaleString()}</span>
             </div>
 
             <input
               className="search-input"
               value={query}
               onChange={event => setQuery(event.target.value)}
-              placeholder="Buscar modelo, arma, escudo..."
+              placeholder="Buscar: itws, itda, hair, shield, wing..."
             />
 
-            <div className="filter-tabs studio-tabs">
+            <div className="filter-tabs studio-tabs category-tabs">
               {FILTERS.map(item => (
                 <button
                   key={item.id}
                   type="button"
+                  title={item.hint}
                   className={filter === item.id ? "active" : ""}
                   onClick={() => setFilter(item.id)}
                 >
                   {item.label}
-                  <small>{counts[item.id]}</small>
+                  <small>{counts[item.id].toLocaleString()}</small>
                 </button>
               ))}
             </div>
 
-            <div className="model-list studio-model-list">
-              {filteredModels.length > 0 ? filteredModels.map(entry => {
+            {hiddenModelCount > 0 && (
+              <div className="list-warning">
+                Mostrando 240 de {filteredModels.length.toLocaleString()}. Use a busca para filtrar a tmABCD.
+              </div>
+            )}
+
+            <div className="model-list studio-model-list professional-model-list">
+              {displayedModels.length > 0 ? displayedModels.map(entry => {
                 const active = selectedModel?.id === entry.id;
                 const profile = getProfile(entry);
                 return (
                   <button
                     key={entry.id}
                     type="button"
-                    className={`model-card studio-model-card ${active ? "active" : ""}`}
+                    className={`model-card studio-model-card professional-model-card kind-${profile.kind} ${active ? "active" : ""}`}
                     onClick={() => setSelectedId(entry.id)}
                   >
                     <span className="model-card-head">
                       <span className="model-name">{entry.name}</span>
-                      <span className="model-badge">{profile.badge}</span>
+                      <span className={`model-badge badge-${profile.kind}`}>{profile.badge}</span>
                     </span>
                     <span className="model-path">{entry.path}</span>
                     <span className="model-meta">{readableSize(entry.file.size)} · {profile.label}</span>
@@ -392,14 +450,14 @@ export default function App() {
                 );
               }) : (
                 <div className="empty-small">
-                  Nenhum .smd nesse filtro. Abra uma pasta que contenha o modelo 3D e suas texturas.
+                  Nenhum .smd nesse filtro. Abra a tmABCD ou uma pasta contendo modelo 3D e texturas.
                 </div>
               )}
             </div>
           </section>
         </aside>
 
-        <section className="studio-viewer">
+        <section className="studio-viewer professional-viewer">
           {selectedModel ? (
             <SMDViewer
               key={selectedModel.id}
@@ -408,13 +466,13 @@ export default function App() {
               extraFiles={viewerAssets}
             />
           ) : (
-            <div className="drop-hero studio-hero">
+            <div className="drop-hero studio-hero professional-hero">
               <div className="orb">3D</div>
-              <h2>Visualize itens do PristonTale sem instalar ferramenta local</h2>
-              <p>O cliente pode enviar uma pasta ou selecionar arquivos SMD com texturas. A prévia mostra o modelo em Showcase, com rotação, textura, eixo PT e exportação PNG.</p>
+              <h2>Abra a pasta do cliente para gerar preview profissional</h2>
+              <p>Selecione a tmABCD ou uma pasta com SMD e texturas. Depois filtre por Ataque, Defesa, Hair, Asas ou Skins.</p>
               <div className="hero-actions">
                 <label className="action-button primary large">
-                  Abrir pasta completa
+                  Abrir tmABCD / pasta completa
                   <FolderInput
                     type="file"
                     webkitdirectory=""
@@ -426,10 +484,10 @@ export default function App() {
                   />
                 </label>
                 <label className="action-button large">
-                  Abrir arquivos soltos
+                  Abrir SMD + textura
                   <input
                     type="file"
-                    accept=".smd,.bmp,.tga,.dds,.png,.jpg,.jpeg"
+                    accept=".smd,.bmp,.tga,.dds,.png,.jpg,.jpeg,.SMD,.BMP,.TGA,.DDS,.PNG,.JPG,.JPEG"
                     multiple
                     onChange={event => {
                       if (event.target.files) void processFiles(event.target.files);
@@ -443,24 +501,24 @@ export default function App() {
           )}
         </section>
 
-        <aside className="studio-right">
-          <section className="panel inspector-card">
+        <aside className="studio-right professional-right">
+          <section className="panel inspector-card professional-inspector">
             <div className="panel-title-row">
-              <h2>Modelo selecionado</h2>
+              <h2>Item selecionado</h2>
               <span>{selectedModel ? "ativo" : "vazio"}</span>
             </div>
             {selectedModel && selectedProfile ? (
               <div className="inspector-content">
                 <strong className="inspector-title">{selectedModel.name}</strong>
                 <p>{selectedModel.path}</p>
-                <div className="kv-grid">
-                  <span>Tipo</span><strong>{selectedProfile.label}</strong>
-                  <span>Status</span><strong>{selectedProfile.badge}</strong>
+                <div className="kv-grid pro-kv">
+                  <span>Categoria</span><strong>{selectedProfile.label}</strong>
+                  <span>Uso</span><strong>{selectedProfile.badge}</strong>
                   <span>Tamanho</span><strong>{readableSize(selectedModel.file.size)}</strong>
-                  <span>Textura provável</span><strong>{selectedTextureHint?.name ?? "ver no painel do viewer"}</strong>
+                  <span>Textura provável</span><strong>{selectedTextureHint?.name ?? "o viewer detecta pelo SMD"}</strong>
                 </div>
-                <div className="recommendation-box">
-                  <strong>Recomendação</strong>
+                <div className="recommendation-box professional-recommendation">
+                  <strong>{selectedProfile.action}</strong>
                   <p>{selectedProfile.note}</p>
                 </div>
               </div>
@@ -469,33 +527,40 @@ export default function App() {
             )}
           </section>
 
-          <section className="panel usage-card">
+          <section className="panel usage-card professional-usage">
             <div className="panel-title-row">
-              <h2>Uso recomendado</h2>
-              <span>PristonTale</span>
+              <h2>Tipos de item</h2>
+              <span>PT</span>
             </div>
-            <div className="usage-list">
-              <div><strong>Showcase</strong><span>Para arma, escudo, asa, elmo, máscara e item isolado.</span></div>
-              <div><strong>Textura</strong><span>Deixe ligado para aproximar o visual dentro do jogo.</span></div>
-              <div><strong>Eixo PT</strong><span>Use quando o modelo abrir deitado ou invertido.</span></div>
-              <div><strong>Centralizar</strong><span>Corrige câmera e escala para print/catalogação.</span></div>
+            <div className="usage-list pro-usage-list">
+              <div><strong>Ataque</strong><span>itW*, sword, axe, bow, staff, claw, javelin.</span></div>
+              <div><strong>Defesa</strong><span>itD*, armor, shield, boots, gloves, robe.</span></div>
+              <div><strong>Hair/Mask</strong><span>hair, mask, cap, head e visual de cabeça.</span></div>
+              <div><strong>Texturas</strong><span>Compatível com BMP, TGA, DDS, PNG, JPG.</span></div>
             </div>
           </section>
 
-          <section className="panel texture-panel studio-assets">
+          <section className="panel texture-panel studio-assets professional-assets">
             <div className="panel-title-row">
-              <h2>Assets importados</h2>
-              <span>{assetFiles.length}</span>
+              <h2>Texturas importadas</h2>
+              <span>{textureFiles.length.toLocaleString()}</span>
+            </div>
+            <div className="texture-stats">
+              <span>BMP <b>{textureStats.bmp}</b></span>
+              <span>TGA <b>{textureStats.tga}</b></span>
+              <span>DDS <b>{textureStats.dds}</b></span>
+              <span>PNG <b>{textureStats.png}</b></span>
+              <span>JPG <b>{textureStats.jpg}</b></span>
             </div>
             <div className="asset-list">
-              {assetFiles.slice(0, 120).map(entry => (
+              {textureFiles.slice(0, 120).map(entry => (
                 <div key={entry.id} className="asset-row">
                   <span>{entry.name}</span>
                   <small>{entry.ext || "file"}</small>
                 </div>
               ))}
-              {assetFiles.length > 120 && <div className="asset-more">+{assetFiles.length - 120} arquivos</div>}
-              {assetFiles.length === 0 && <div className="empty-small">Texturas BMP/TGA/DDS/PNG aparecem aqui.</div>}
+              {textureFiles.length > 120 && <div className="asset-more">+{textureFiles.length - 120} texturas</div>}
+              {textureFiles.length === 0 && <div className="empty-small">BMP/TGA/DDS/PNG/JPG aparecem aqui quando forem importados.</div>}
             </div>
           </section>
         </aside>

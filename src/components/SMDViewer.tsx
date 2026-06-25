@@ -105,6 +105,10 @@ function justFileName(name: string): string {
   return name.replace(/\\/g, "/").split("/").pop()?.toLowerCase() ?? name.toLowerCase();
 }
 
+function textureKey(value: string): string {
+  return baseName(value).replace(/[^a-z0-9]/g, "");
+}
+
 function isSameFile(a: File | null | undefined, b: File | null | undefined): boolean {
   if (!a || !b) return false;
   return a.name === b.name && a.size === b.size && a.lastModified === b.lastModified;
@@ -131,19 +135,37 @@ function uniqueStrings(values: string[]): string[] {
 function findTextureFile(candidates: string[], smdFile: File, extraFiles: File[]): File | null {
   const textures = extraFiles.filter(isTextureFile);
   const smdBase = baseName(smdFile.name);
+  const smdKey = textureKey(smdFile.name);
   const normalizedCandidates = uniqueStrings(candidates);
+
+  if (textures.length === 1 && normalizedCandidates.length <= 1) {
+    return textures[0];
+  }
 
   for (const candidate of normalizedCandidates) {
     const expectedFile = justFileName(candidate);
     const expectedBase = baseName(candidate);
+    const expectedKey = textureKey(candidate);
+
     const exact = textures.find(file => justFileName(file.name) === expectedFile);
     if (exact) return exact;
+
     const sameBase = textures.find(file => baseName(file.name) === expectedBase && expectedBase.length > 0);
     if (sameBase) return sameBase;
+
+    const normalized = textures.find(file => {
+      const key = textureKey(file.name);
+      return key === expectedKey || (expectedKey.length >= 4 && (key.includes(expectedKey) || expectedKey.includes(key)));
+    });
+    if (normalized) return normalized;
   }
 
   return textures.find(file => baseName(file.name) === smdBase)
-    ?? textures.find(file => baseName(file.name).includes(smdBase) && smdBase.length >= 3)
+    ?? textures.find(file => textureKey(file.name) === smdKey)
+    ?? textures.find(file => {
+      const key = textureKey(file.name);
+      return smdKey.length >= 4 && (key.includes(smdKey) || smdKey.includes(key));
+    })
     ?? null;
 }
 
