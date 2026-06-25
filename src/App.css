@@ -932,3 +932,169 @@ input[type="file"] { display: none; }
   .showcase-footer { display: none; }
   .showcase-stats { grid-template-columns: 1fr 1fr; }
 }
+
+/* ALUCARD-TOOLS Smart Library / Professional Catalog Filter */
+.filter-tabs {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: 0 12px 10px;
+}
+
+.filter-tabs button {
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 6px 9px;
+  border-radius: 999px;
+  color: #b9c5e8;
+  background: rgba(2, 4, 12, 0.42);
+  border: 1px solid rgba(157, 177, 255, 0.12);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.filter-tabs button:hover {
+  color: #ffffff;
+  border-color: rgba(157, 177, 255, 0.32);
+  background: rgba(64, 76, 130, 0.32);
+}
+
+.filter-tabs button.active {
+  color: #ffffff;
+  background: linear-gradient(135deg, rgba(82, 103, 255, 0.82), rgba(138, 94, 255, 0.74));
+  border-color: rgba(211, 218, 255, 0.48);
+}
+
+.filter-tabs small {
+  min-width: 18px;
+  padding: 2px 5px;
+  border-radius: 999px;
+  color: #dfe7ff;
+  background: rgba(255, 255, 255, 0.12);
+  font-size: 10px;
+  text-align: center;
+}
+
+.compatibility-panel {
+  flex: 0 0 auto;
+  overflow: visible;
+}
+
+.compatibility-panel.profile-showcase {
+  border-color: rgba(110, 224, 147, 0.24);
+  background: linear-gradient(135deg, rgba(70, 145, 95, 0.12), rgba(255, 255, 255, 0.045));
+}
+
+.compatibility-panel.profile-character,
+.compatibility-panel.profile-part {
+  border-color: rgba(255, 177, 110, 0.26);
+  background: linear-gradient(135deg, rgba(155, 95, 35, 0.12), rgba(255, 255, 255, 0.045));
+}
+
+.compatibility-body {
+  display: grid;
+  gap: 7px;
+  padding: 0 14px 14px;
+}
+
+.compatibility-body strong {
+  color: #ffffff;
+  font-size: 13px;
+}
+
+.compatibility-body p {
+  margin: 0;
+  color: #9ca8ca;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.compatibility-body button {
+  cursor: pointer;
+  justify-self: start;
+  min-height: 30px;
+  padding: 7px 10px;
+  border-radius: 10px;
+  color: #eef3ff;
+  background: rgba(82, 103, 255, 0.22);
+  border: 1px solid rgba(157, 177, 255, 0.2);
+}
+
+.compatibility-ok {
+  justify-self: start;
+  color: #b9ffd0;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.model-card-head {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.model-card-head .model-name {
+  min-width: 0;
+}
+
+.model-badge {
+  flex: 0 0 auto;
+  padding: 3px 6px;
+  border-radius: 999px;
+  font-size: 9px;
+  font-weight: 950;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.model-badge.profile-showcase {
+  color: #b9ffd0;
+  background: rgba(60, 185, 100, 0.14);
+  border-color: rgba(110, 224, 147, 0.3);
+}
+
+.model-badge.profile-character {
+  color: #c8d2ff;
+  background: rgba(82, 103, 255, 0.16);
+  border-color: rgba(157, 177, 255, 0.28);
+}
+
+.model-badge.profile-part {
+  color: #ffd5a8;
+  background: rgba(255, 143, 61, 0.14);
+  border-color: rgba(255, 177, 110, 0.28);
+}
+
+.model-card.profile-showcase {
+  border-color: rgba(110, 224, 147, 0.16);
+}
+
+.model-card.profile-character {
+  border-color: rgba(157, 177, 255, 0.15);
+}
+
+.model-card.profile-part {
+  border-color: rgba(255, 177, 110, 0.14);
+}
+
+.model-card.profile-showcase.active {
+  background: linear-gradient(135deg, rgba(70, 190, 115, 0.22), rgba(82, 103, 255, 0.16));
+  border-color: rgba(110, 224, 147, 0.46);
+}
+
+.model-card.profile-character.active {
+  background: linear-gradient(135deg, rgba(82, 103, 255, 0.28), rgba(137, 94, 255, 0.14));
+}
+
+.model-card.profile-part.active {
+  background: linear-gradient(135deg, rgba(255, 143, 61, 0.20), rgba(82, 103, 255, 0.14));
+  border-color: rgba(255, 177, 110, 0.38);
+}

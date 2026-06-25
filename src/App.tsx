@@ -31,6 +31,82 @@ interface EmbeddedManifest {
   characters: EmbeddedCharacter[];
 }
 
+type ModelCategoryFilter = "all" | "showcase" | "equipment" | "character" | "part";
+type ModelCategory = Exclude<ModelCategoryFilter, "all">;
+
+interface ModelProfile {
+  category: ModelCategory;
+  label: string;
+  badge: string;
+  className: string;
+  showcaseReady: boolean;
+  recommendation: string;
+}
+
+const MODEL_FILTERS: Array<{ id: ModelCategoryFilter; label: string }> = [
+  { id: "all", label: "Todos" },
+  { id: "showcase", label: "Showcase OK" },
+  { id: "equipment", label: "Equipamentos" },
+  { id: "character", label: "Personagens" },
+  { id: "part", label: "Partes/Costumes" },
+];
+
+function modelStem(name: string): string {
+  return name.replace(/\\/g, "/").split("/").pop()?.replace(/\.[^.]+$/, "").toLowerCase() ?? "";
+}
+
+function getModelProfile(entry: FileEntry): ModelProfile {
+  const stem = modelStem(entry.name);
+
+  const isBaseCharacter = /^(archer|atalanta|assasin|assassin|mago|mecanico|sacer|shaman|pikeman|lutador|fighter|kinght|knight)(1|2)?$/i.test(stem);
+  const isHairOrMask = /(hair|mask|msk|cap|head|face|helmet|helm)/i.test(stem);
+  const isWeaponOrShield = /(itwa|weapon|sword|axe|bow|arco|javelin|staff|wand|shield|shl|escudo|orb|claw|dagger)/i.test(stem);
+  const isBackVisual = /(wing|back|costas|cape|manto|asa)/i.test(stem);
+  const isCostumeOrBody = /(armor|armou?r|dress|robe|costume|lpk|xmas|dragon|swim|santa|hanbok|kimono|school|soldier|wedding|wc|traje|125|128|150|175|301|vip|inferno|predator|premo|arc|ata|mec|pik|pri|pr|fs|ks|ms|mg|sh)/i.test(stem);
+
+  if (isBaseCharacter) {
+    return {
+      category: "character",
+      label: "Personagem base",
+      badge: "Base",
+      className: "profile-character",
+      showcaseReady: false,
+      recommendation: "Use no modo Personagem/HTML. Para Showcase puro, prefira arma, escudo, asa, máscara ou item isolado.",
+    };
+  }
+
+  if (isWeaponOrShield || isBackVisual || isHairOrMask) {
+    return {
+      category: "equipment",
+      label: isWeaponOrShield ? "Equipamento isolado" : "Acessório isolado",
+      badge: "Showcase OK",
+      className: "profile-showcase",
+      showcaseReady: true,
+      recommendation: "Bom para Showcase: centralizar, Textura ON, Auto giro e Exportar PNG.",
+    };
+  }
+
+  if (isCostumeOrBody) {
+    return {
+      category: "part",
+      label: "Parte/costume",
+      badge: "Montagem",
+      className: "profile-part",
+      showcaseReady: false,
+      recommendation: "Pode aparecer amassado no 3D bruto. Use como parte do personagem ou teste no modo HTML/Personagem.",
+    };
+  }
+
+  return {
+    category: "showcase",
+    label: "Modelo isolado",
+    badge: "Showcase OK",
+    className: "profile-showcase",
+    showcaseReady: true,
+    recommendation: "Modelo genérico: recomendado para Showcase se a textura carregar corretamente.",
+  };
+}
+
 function fileId(file: File): string {
   const path = file.webkitRelativePath || file.name;
   return `${path}::${file.size}::${file.lastModified}`;
@@ -115,17 +191,34 @@ export default function App() {
   const [loadedPackId, setLoadedPackId] = useState("");
   const [dragging, setDragging] = useState(false);
   const [query, setQuery] = useState("");
+  const [categoryFilter, setCategoryFilter] = useState<ModelCategoryFilter>("all");
 
   const selectedModel = smdFiles.find(entry => entry.id === selectedId) ?? smdFiles[0] ?? null;
   const characterModel = smdFiles.find(entry => entry.id === characterId) ?? null;
   const textureCount = assetFiles.filter(entry => isTextureExt(entry.ext)).length;
   const viewerAssets = useMemo(() => assetFiles.map(entry => entry.file), [assetFiles]);
+  const selectedProfile = selectedModel ? getModelProfile(selectedModel) : null;
+
+  const profileCounts = useMemo(() => {
+    const counts: Record<ModelCategoryFilter, number> = { all: smdFiles.length, showcase: 0, equipment: 0, character: 0, part: 0 };
+    for (const entry of smdFiles) {
+      const profile = getModelProfile(entry);
+      if (profile.category !== "showcase") counts[profile.category] += 1;
+      if (profile.showcaseReady) counts.showcase += 1;
+    }
+    return counts;
+  }, [smdFiles]);
 
   const filteredModels = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return smdFiles;
-    return smdFiles.filter(entry => entry.path.toLowerCase().includes(q) || entry.name.toLowerCase().includes(q));
-  }, [query, smdFiles]);
+    return smdFiles.filter(entry => {
+      const profile = getModelProfile(entry);
+      const matchesQuery = !q || entry.path.toLowerCase().includes(q) || entry.name.toLowerCase().includes(q);
+      const matchesCategory = categoryFilter === "all"
+        || (categoryFilter === "showcase" ? profile.showcaseReady : profile.category === categoryFilter);
+      return matchesQuery && matchesCategory;
+    });
+  }, [query, smdFiles, categoryFilter]);
 
   const characterOptions = useMemo(() => {
     const likely = smdFiles.filter(isLikelyCharacter);
@@ -160,7 +253,8 @@ export default function App() {
 
     if (smds.length > 0) {
       setSmdFiles(prev => mergeEntries(prev, smds));
-      setSelectedId(current => current || smds[0].id);
+      const recommended = smds.find(entry => getModelProfile(entry).showcaseReady) ?? smds[0];
+      setSelectedId(current => current || recommended.id);
     }
 
     if (assets.length > 0) {
@@ -174,6 +268,7 @@ export default function App() {
     setSelectedId("");
     setCharacterId("");
     setQuery("");
+    setCategoryFilter("all");
     setLoadedPackId("");
   }
 
@@ -227,7 +322,8 @@ export default function App() {
       const assets = loaded.filter(entry => entry.ext !== "smd");
       const base = pickEntryByName(smds, character.base) ?? pickDefaultCharacter(smds) ?? smds[0] ?? null;
       const defaultModel = character.defaultModel ? pickEntryByName(smds, character.defaultModel) : null;
-      const preview = defaultModel ?? smds.find(entry => entry.id !== base?.id) ?? base;
+      const showcaseModel = smds.find(entry => getModelProfile(entry).showcaseReady && entry.id !== base?.id) ?? null;
+      const preview = showcaseModel ?? defaultModel ?? smds.find(entry => entry.id !== base?.id) ?? base;
 
       setSmdFiles(prev => mergeEntries(prev, smds));
       setAssetFiles(prev => mergeEntries(prev, assets));
@@ -235,6 +331,7 @@ export default function App() {
       setSelectedId(preview?.id ?? base?.id ?? "");
       setLoadedPackId(character.id);
       setQuery("");
+      setCategoryFilter("all");
     } catch (error) {
       console.error(error);
       setEmbeddedError((error as Error).message || "Falha ao carregar personagem Vercel.");
@@ -246,16 +343,24 @@ export default function App() {
 
   const modelList = filteredModels.map(entry => {
     const active = selectedModel?.id === entry.id;
+    const profile = getModelProfile(entry);
     return (
       <button
         key={entry.id}
         type="button"
-        className={`model-card ${active ? "active" : ""}`}
-        onClick={() => setSelectedId(entry.id)}
+        className={`model-card ${profile.className} ${active ? "active" : ""}`}
+        title={profile.recommendation}
+        onClick={() => {
+          setSelectedId(entry.id);
+          if (profile.category === "character") setCharacterId(entry.id);
+        }}
       >
-        <span className="model-name">{entry.name}</span>
+        <span className="model-card-head">
+          <span className="model-name">{entry.name}</span>
+          <span className={`model-badge ${profile.className}`}>{profile.badge}</span>
+        </span>
         <span className="model-path">{entry.path}</span>
-        <span className="model-meta">{readableSize(entry.file.size)}</span>
+        <span className="model-meta">{readableSize(entry.file.size)} · {profile.label}</span>
       </button>
     );
   });
@@ -393,10 +498,42 @@ export default function App() {
             </div>
           </section>
 
+          {selectedModel && selectedProfile && (
+            <section className={`panel compatibility-panel ${selectedProfile.className}`}>
+              <div className="panel-title-row">
+                <h2>Modo recomendado</h2>
+                <span>{selectedProfile.badge}</span>
+              </div>
+              <div className="compatibility-body">
+                <strong>{selectedProfile.label}</strong>
+                <p>{selectedProfile.recommendation}</p>
+                {selectedProfile.category === "character" && (
+                  <button type="button" onClick={() => setCharacterId(selectedModel.id)}>Usar como personagem base</button>
+                )}
+                {selectedProfile.showcaseReady && (
+                  <span className="compatibility-ok">Pronto para catálogo/showcase</span>
+                )}
+              </div>
+            </section>
+          )}
+
           <section className="panel">
             <div className="panel-title-row">
               <h2>Biblioteca SMD</h2>
               <span>{filteredModels.length}/{smdFiles.length}</span>
+            </div>
+            <div className="filter-tabs">
+              {MODEL_FILTERS.map(filter => (
+                <button
+                  key={filter.id}
+                  type="button"
+                  className={categoryFilter === filter.id ? "active" : ""}
+                  onClick={() => setCategoryFilter(filter.id)}
+                >
+                  {filter.label}
+                  <small>{profileCounts[filter.id]}</small>
+                </button>
+              ))}
             </div>
             <input
               className="search-input"
@@ -407,7 +544,7 @@ export default function App() {
             <div className="model-list">
               {modelList.length > 0 ? modelList : (
                 <div className="empty-small">
-                  Nenhum modelo carregado. Carregue uma classe Vercel, abra uma pasta do cliente ou arraste arquivos aqui.
+                  Nenhum modelo neste filtro. Use "Todos" ou carregue uma pasta com itens/armas/escudos.
                 </div>
               )}
             </div>
