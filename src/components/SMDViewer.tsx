@@ -328,19 +328,6 @@ async function buildSmdModel(file: File, extraFiles: File[], textured: boolean, 
 }
 
 
-function guessCharacterClassFromName(fileName: string, fallback: CharacterClass): CharacterClass {
-  const name = fileName.toLowerCase();
-  if (/(archer|arc)/.test(name)) return "Archer";
-  if (/(atalanta|ata|atal)/.test(name)) return "Atalanta";
-  if (/(mecanico|mechanic|mechanician|mec|mech|ms)/.test(name)) return "Mechanician";
-  if (/(mago|magician|mg)/.test(name)) return "Magician";
-  if (/(sacer|priest|priestess|prs|pr)/.test(name)) return "Priestess";
-  if (/(pikeman|pike|pik|ps)/.test(name)) return "Pikeman";
-  if (/(fighter|lutador|lut|fs)/.test(name)) return "Fighter";
-  if (/(kinght|knight|kin|ks)/.test(name)) return "Knight";
-  return fallback;
-}
-
 export function SMDViewer({ smdFile, smdPath, extraFiles, characterFile = null, characterPath = "" }: Props) {
   const mountRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<any>(null);
