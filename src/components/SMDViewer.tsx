@@ -617,7 +617,8 @@ export function SMDViewer({ smdFile, smdPath, extraFiles, characterFile = null, 
 
     function animate() {
       animationId = requestAnimationFrame(animate);
-      if (options.autoRotate && rotatingGroup) rotatingGroup.rotation.y += options.showcase ? 0.0065 : 0.012;
+      // Auto giro removido por padrão: o modelo só se move por ação do usuário ou ajuste manual.
+      if (rotatingGroup) { /* parado */ }
       controls.update();
       renderer.render(scene, camera);
     }
@@ -755,7 +756,6 @@ export function SMDViewer({ smdFile, smdPath, extraFiles, characterFile = null, 
         <button type="button" className={options.wireframe ? "active" : ""} onClick={() => toggleOption("wireframe")}>Wireframe</button>
         <button type="button" className={options.grid ? "active" : ""} onClick={() => toggleOption("grid")}>Grid</button>
         <button type="button" className={options.axes ? "active" : ""} onClick={() => toggleOption("axes")}>Eixos</button>
-        <button type="button" className={options.autoRotate ? "active" : ""} onClick={() => toggleOption("autoRotate")}>Auto giro</button>
         <button type="button" className={showTransformPanel ? "active" : ""} onClick={() => setShowTransformPanel(prev => !prev)}>Ajuste manual</button>
         <button type="button" className={options.ptAxisFix ? "active" : ""} onClick={() => toggleOption("ptAxisFix")}>Eixo PT</button>
         <button type="button" onClick={() => toggleOption("darkBackground")}>Fundo</button>
@@ -764,7 +764,7 @@ export function SMDViewer({ smdFile, smdPath, extraFiles, characterFile = null, 
         <button type="button" className="export" onClick={exportPng}>Exportar PNG</button>
       </div>
 
-      <div className="help-pill">{options.showcase ? "Showcase: arraste para girar · zoom suave · exporte PNG" : "Mouse: girar · Scroll: zoom · Direito: mover"}</div>
+      <div className="help-pill">{options.showcase ? "Showcase: modelo parado · use Ajuste manual ou arraste a câmera" : "Mouse: girar · Scroll: zoom · Direito: mover"}</div>
 
       {/* Personagem preview removido: somente Showcase profissional para modelos isolados. */}
 
@@ -774,7 +774,7 @@ export function SMDViewer({ smdFile, smdPath, extraFiles, characterFile = null, 
         <div className="manual-transform-panel">
           <div className="manual-title">
             <strong>Ajuste manual do objeto</strong>
-            <span>Move, gira e escala sem recarregar o modelo.</span>
+            <span>Move, gira e escala o objeto livremente. Auto giro fica desligado.</span>
           </div>
           <div className="manual-range-grid">
             <label><span>X</span><input type="range" min="-80" max="80" step="0.1" value={equip.offsetX} onChange={event => updateEquip("offsetX", Number(event.target.value))} /><b>{equip.offsetX.toFixed(1)}</b></label>
