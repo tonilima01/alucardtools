@@ -1,876 +1,398 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { parseSmd } from "../lib/parseSmd";
 import { textureFromFile } from "../lib/decryptTexture";
+import type { ItemPackage } from "../types/itemPackage";
+import { LoadingOverlay } from "./LoadingOverlay";
 
 interface Props {
-  smdFile: File;
-  smdPath: string;
-  extraFiles: File[];
-  characterFile?: File | null;
-  characterPath?: string;
+  item: ItemPackage | null;
 }
 
-interface ViewOptions {
-  textured: boolean;
-  wireframe: boolean;
-  grid: boolean;
-  axes: boolean;
-  autoRotate: boolean;
-  darkBackground: boolean;
-  characterPreview: boolean;
-  ptAxisFix: boolean;
-  showcase: boolean;
+interface ViewerStats {
+  triangles: number;
+  vertices: number;
+  objects: number;
+  bounds: string;
+  texture: string;
+  status: string;
 }
 
-type EquipSlot = "free" | "weapon" | "shield" | "helmet" | "armor" | "back";
-type CharacterClass = "Knight" | "Fighter" | "Pikeman" | "Archer" | "Atalanta" | "Mechanician" | "Magician" | "Priestess";
-
-interface EquipTransform {
-  offsetX: number;
-  offsetY: number;
-  offsetZ: number;
-  rotationX: number;
-  rotationY: number;
-  rotationZ: number;
+interface ManualTransform {
+  x: number;
+  y: number;
+  z: number;
+  rx: number;
+  ry: number;
+  rz: number;
   scale: number;
-  autoFit: boolean;
 }
 
-interface ViewerInfo {
-  modelName: string;
-  modelPath: string;
-  modelSize: string;
-  triangles: number;
-  vertices: number;
-  expectedTexture: string;
-  matchedTexture: string;
-  textureStatus: "loaded" | "missing" | "none" | "error";
-  objectCount: number;
-  bounds: string;
-  assetCount: number;
-  previewLabel: string;
-  characterName: string;
-  characterTexture: string;
+const DEFAULT_TRANSFORM: ManualTransform = { x: 0, y: 0, z: 0, rx: 0, ry: 0, rz: 0, scale: 1 };
+
+function boundsText(box: THREE.Box3): string {
+  const s = new THREE.Vector3();
+  box.getSize(s);
+  return `${s.x.toFixed(1)} × ${s.y.toFixed(1)} × ${s.z.toFixed(1)}`;
 }
 
-interface BuiltSmdModel {
-  group: any;
-  size: any;
-  maxDim: number;
-  textureName: string;
-  textureNames: string[];
-  expectedTexture: string;
-  matchedTexture: File | null;
-  textureStatus: ViewerInfo["textureStatus"];
-  objectCount: number;
-  triangles: number;
-  vertices: number;
-  bounds: string;
-  errors: string[];
-}
-
-const DEFAULT_EQUIP: Record<EquipSlot, EquipTransform> = {
-  free:   { offsetX: 0,    offsetY: 0,    offsetZ: 0,    rotationX: 0,   rotationY: 0,   rotationZ: 0,   scale: 1,    autoFit: false },
-  weapon: { offsetX: -0.2, offsetY: -0.15, offsetZ: 0.1,  rotationX: -12, rotationY: 12,  rotationZ: -28, scale: 1,    autoFit: true },
-  shield: { offsetX: 0.2,  offsetY: -0.15, offsetZ: 0.2,  rotationX: 0,   rotationY: -18, rotationZ: 8,   scale: 1,    autoFit: true },
-  helmet: { offsetX: 0,    offsetY: 0.15,  offsetZ: 0,    rotationX: 0,   rotationY: 0,   rotationZ: 0,   scale: 0.9,  autoFit: true },
-  armor:  { offsetX: 0,    offsetY: 0,     offsetZ: 0,    rotationX: 0,   rotationY: 0,   rotationZ: 0,   scale: 1.05, autoFit: true },
-  back:   { offsetX: 0,    offsetY: 0.1,   offsetZ: -0.4, rotationX: 0,   rotationY: 180, rotationZ: 0,   scale: 1,    autoFit: true },
-};
-
-const SLOT_LABELS: Record<EquipSlot, string> = {
-  free: "Modelo livre",
-  weapon: "Arma / mão direita",
-  shield: "Escudo / mão esquerda",
-  helmet: "Elmo / cabeça",
-  armor: "Armadura / corpo",
-  back: "Costas / visual",
-};
-
-const REAL_CHARACTER_HEIGHT = 8.6;
-
-function readableSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / 1024 / 1024).toFixed(2)} MB`;
-}
-
-function baseName(name: string): string {
-  return name.replace(/\\/g, "/").split("/").pop()?.replace(/\.[^.]+$/, "").toLowerCase() ?? "";
-}
-
-function justFileName(name: string): string {
-  return name.replace(/\\/g, "/").split("/").pop()?.toLowerCase() ?? name.toLowerCase();
-}
-
-function textureKey(value: string): string {
-  return baseName(value).replace(/[^a-z0-9]/g, "");
-}
-
-function isSameFile(a: File | null | undefined, b: File | null | undefined): boolean {
-  if (!a || !b) return false;
-  return a.name === b.name && a.size === b.size && a.lastModified === b.lastModified;
-}
-
-function isTextureFile(file: File): boolean {
-  return /\.(bmp|tga|png|jpg|jpeg|dds)$/i.test(file.name);
-}
-
-function uniqueStrings(values: string[]): string[] {
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const value of values) {
-    const trimmed = value.trim();
-    const key = trimmed.toLowerCase();
-    if (trimmed && !seen.has(key)) {
-      seen.add(key);
-      out.push(trimmed);
-    }
+function pickBestTexture(item: ItemPackage, textureNames: string[]): File | null {
+  if (!item.textures.length) return null;
+  for (const texName of textureNames) {
+    const exact = item.textures.find(t => t.file.name.toLowerCase() === texName.toLowerCase());
+    if (exact) return exact.file.file;
+    const sameBase = item.textures.find(t => t.file.name.replace(/\.[^.]+$/, "").toLowerCase() === texName.replace(/\.[^.]+$/, "").toLowerCase());
+    if (sameBase) return sameBase.file.file;
   }
-  return out;
+  return item.textures[0].file.file;
 }
 
-function findTextureFile(candidates: string[], smdFile: File, extraFiles: File[]): File | null {
-  const textures = extraFiles.filter(isTextureFile);
-  const smdBase = baseName(smdFile.name);
-  const smdKey = textureKey(smdFile.name);
-  const normalizedCandidates = uniqueStrings(candidates);
-
-  if (textures.length === 1 && normalizedCandidates.length <= 1) {
-    return textures[0];
-  }
-
-  for (const candidate of normalizedCandidates) {
-    const expectedFile = justFileName(candidate);
-    const expectedBase = baseName(candidate);
-    const expectedKey = textureKey(candidate);
-
-    const exact = textures.find(file => justFileName(file.name) === expectedFile);
-    if (exact) return exact;
-
-    const sameBase = textures.find(file => baseName(file.name) === expectedBase && expectedBase.length > 0);
-    if (sameBase) return sameBase;
-
-    const normalized = textures.find(file => {
-      const key = textureKey(file.name);
-      return key === expectedKey || (expectedKey.length >= 4 && (key.includes(expectedKey) || expectedKey.includes(key)));
-    });
-    if (normalized) return normalized;
-  }
-
-  return textures.find(file => baseName(file.name) === smdBase)
-    ?? textures.find(file => textureKey(file.name) === smdKey)
-    ?? textures.find(file => {
-      const key = textureKey(file.name);
-      return smdKey.length >= 4 && (key.includes(smdKey) || smdKey.includes(key));
-    })
-    ?? null;
-}
-
-function formatBounds(x: number, y: number, z: number): string {
-  return `${x.toFixed(1)} × ${y.toFixed(1)} × ${z.toFixed(1)}`;
-}
-
-function degToRad(value: number): number {
-  return value * Math.PI / 180;
-}
-
-function getAnchor(slot: EquipSlot) {
-  switch (slot) {
-    case "weapon": return { x: -2.35, y: 5.45, z: 0.35 };
-    case "shield": return { x: 2.35, y: 5.3, z: 0.45 };
-    case "helmet": return { x: 0, y: 8.8, z: 0 };
-    case "armor": return { x: 0, y: 4.55, z: 0 };
-    case "back": return { x: 0, y: 5.4, z: -1.0 };
-    default: return { x: 0, y: 0, z: 0 };
-  }
-}
-
-function guessSlotFromName(fileName: string): EquipSlot {
-  const name = fileName.toLowerCase();
-  if (/(armor|armou?r|kina|kinght|knight|atalanta|archer|assasin|pikeman|fighter|mecanico|mago|sacer|shaman)/i.test(name)) return "armor";
-  if (/(shield|shl|escudo)/i.test(name)) return "shield";
-  if (/(helmet|helm|hair|mask|cap|hknight|head)/i.test(name)) return "helmet";
-  if (/(wing|back|costas)/i.test(name)) return "back";
-  if (/(itwa|sword|axe|bow|javelin|staff|weapon|arma)/i.test(name)) return "weapon";
-  return "free";
-}
-
-function getFitSize(slot: EquipSlot): number {
-  switch (slot) {
-    case "weapon": return 5.8;
-    case "shield": return 3.4;
-    case "helmet": return 1.55;
-    case "armor": return 4.1;
-    case "back": return 5.2;
-    default: return 1;
-  }
-}
-
-function applyPremiumModelFlags(group: any) {
-  group.traverse((obj: any) => {
-    if (obj?.isMesh) {
-      obj.castShadow = true;
-      obj.receiveShadow = true;
-      if (obj.material) {
-        const materials = Array.isArray(obj.material) ? obj.material : [obj.material];
-        for (const mat of materials) {
-          if (mat) {
-            mat.needsUpdate = true;
-          }
-        }
-      }
-    }
-  });
-}
-
-function createShowcaseFloor() {
-  const group = new THREE.Group();
-  const shadow = new THREE.Mesh(
-    new THREE.CircleGeometry(14, 96),
-    new THREE.MeshBasicMaterial({
-      color: 0x10162b,
-      transparent: true,
-      opacity: 0.64,
-      depthWrite: false,
-    }),
+function setGroupTransform(group: THREE.Group, transform: ManualTransform, eixoPT: boolean): void {
+  group.position.set(transform.x, transform.y, transform.z);
+  group.rotation.set(
+    THREE.MathUtils.degToRad(transform.rx + (eixoPT ? -90 : 0)),
+    THREE.MathUtils.degToRad(transform.ry),
+    THREE.MathUtils.degToRad(transform.rz),
   );
-  shadow.rotation.x = -Math.PI / 2;
-  shadow.position.y = -0.015;
-  group.add(shadow);
-
-  const ring = new THREE.Mesh(
-    new THREE.TorusGeometry(4.9, 0.018, 8, 160),
-    new THREE.MeshBasicMaterial({ color: 0x7d8cff, transparent: true, opacity: 0.42 }),
-  );
-  ring.rotation.x = Math.PI / 2;
-  ring.position.y = 0.018;
-  group.add(ring);
-
-  const inner = new THREE.Mesh(
-    new THREE.TorusGeometry(2.7, 0.012, 8, 140),
-    new THREE.MeshBasicMaterial({ color: 0xff7a3d, transparent: true, opacity: 0.28 }),
-  );
-  inner.rotation.x = Math.PI / 2;
-  inner.position.y = 0.021;
-  group.add(inner);
-
-  return group;
+  group.scale.setScalar(transform.scale);
 }
 
-function buildPresetJson(smdFile: File, equipSlot: EquipSlot, equip: EquipTransform, characterClass: CharacterClass, characterFile?: File | null): string {
-  return JSON.stringify({
-    tool: "ALUCARD-TOOLS",
-    model: smdFile.name,
-    realCharacter: characterFile?.name ?? "none",
-    characterClass,
-    slot: equipSlot,
-    anchor: SLOT_LABELS[equipSlot],
-    offset: { x: equip.offsetX, y: equip.offsetY, z: equip.offsetZ },
-    rotation: { x: equip.rotationX, y: equip.rotationY, z: equip.rotationZ },
-    scale: equip.scale,
-    autoFit: equip.autoFit,
-  }, null, 2);
-}
+export function SMDViewer({ item }: Props) {
+  const mountRef = useRef<HTMLDivElement | null>(null);
+  const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
+  const sceneRef = useRef<THREE.Scene | null>(null);
+  const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
+  const controlsRef = useRef<OrbitControls | null>(null);
+  const modelGroupRef = useRef<THREE.Group | null>(null);
+  const frameRef = useRef<number | null>(null);
 
-async function buildSmdModel(file: File, extraFiles: File[], textured: boolean, wireframe: boolean, fallbackColor: number, onProgress?: (progress: number, detail: string) => void): Promise<BuiltSmdModel> {
-  const errors: string[] = [];
-  onProgress?.(12, "Lendo arquivo SMD");
-  const buffer = await file.arrayBuffer();
-  onProgress?.(22, "Interpretando malha SMD");
-  const meshData = parseSmd(buffer);
+  const [textureEnabled, setTextureEnabled] = useState(true);
+  const [wireframe, setWireframe] = useState(false);
+  const [grid, setGrid] = useState(false);
+  const [axes, setAxes] = useState(false);
+  const [eixoPT, setEixoPT] = useState(true);
+  const [showManual, setShowManual] = useState(true);
+  const [transform, setTransform] = useState<ManualTransform>(DEFAULT_TRANSFORM);
+  const [loading, setLoading] = useState(false);
+  const [loadingText, setLoadingText] = useState("");
+  const [loadingProgress, setLoadingProgress] = useState(0);
+  const [error, setError] = useState<string | null>(null);
+  const [stats, setStats] = useState<ViewerStats | null>(null);
 
-  onProgress?.(42, "Montando geometria 3D");
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute("position", new THREE.BufferAttribute(meshData.positions, 3));
-  geometry.setAttribute("uv", new THREE.BufferAttribute(meshData.uvs, 2));
-  geometry.setIndex(new THREE.BufferAttribute(meshData.indices, 1));
-  geometry.computeVertexNormals();
-  geometry.computeBoundingBox();
-
-  const textureNames = uniqueStrings([meshData.textureName, ...meshData.textureNames]);
-  const expectedTexture = textureNames[0] ?? "";
-  onProgress?.(58, "Localizando texturas");
-  const matchedTexture = findTextureFile(textureNames, file, extraFiles);
-  let textureStatus: ViewerInfo["textureStatus"] = textureNames.length > 0 ? "missing" : "none";
-  let textureMap: any = null;
-
-  if (matchedTexture) {
-    try {
-      onProgress?.(72, `Carregando textura ${matchedTexture.name}`);
-      textureMap = await textureFromFile(matchedTexture);
-      textureMap.flipY = false;
-      textureMap.colorSpace = THREE.SRGBColorSpace;
-      textureMap.needsUpdate = true;
-      textureStatus = "loaded";
-    } catch (error) {
-      errors.push(`Erro ao carregar textura ${matchedTexture.name}: ${(error as Error).message || String(error)}`);
-      textureStatus = "error";
-    }
-  } else if (textureNames.length > 0) {
-    errors.push(`Textura não encontrada: ${textureNames.slice(0, 4).join(" | ")}`);
-  }
-
-  onProgress?.(86, "Aplicando material e luz");
-  const material = new THREE.MeshStandardMaterial({
-    color: textured && textureMap ? 0xffffff : fallbackColor,
-    map: textured ? textureMap : null,
-    roughness: 0.62,
-    metalness: 0.08,
-    wireframe,
-    side: THREE.DoubleSide,
-  });
-
-  const mesh = new THREE.Mesh(geometry, material);
-  const rawBox = geometry.boundingBox;
-  const center = new THREE.Vector3();
-  const size = new THREE.Vector3();
-  if (rawBox) {
-    rawBox.getCenter(center);
-    rawBox.getSize(size);
-  }
-
-  mesh.position.sub(center);
-  mesh.position.y += size.y / 2;
-
-  const group = new THREE.Group();
-  group.name = file.name;
-  group.add(mesh);
-
-  return {
-    group,
-    size,
-    maxDim: Math.max(size.x, size.y, size.z, 1),
-    textureName: expectedTexture,
-    textureNames,
-    expectedTexture,
-    matchedTexture,
-    textureStatus,
-    objectCount: meshData.objectCount,
-    triangles: meshData.indices.length / 3,
-    vertices: meshData.positions.length / 3,
-    bounds: formatBounds(size.x, size.y, size.z),
-    errors,
-  };
-}
-
-
-export function SMDViewer({ smdFile, smdPath, extraFiles, characterFile = null, characterPath = "" }: Props) {
-  const mountRef = useRef<HTMLDivElement>(null);
-  const rendererRef = useRef<any>(null);
-  const resetViewRef = useRef<(() => void) | null>(null);
-  const activeModelRef = useRef<THREE.Object3D | null>(null);
-  const [info, setInfo] = useState<ViewerInfo | null>(null);
-  const [errors, setErrors] = useState<string[]>([]);
-  const [copiedPreset, setCopiedPreset] = useState(false);
-  const [characterClass] = useState<CharacterClass>("Knight");
-  const [equipSlot, setEquipSlot] = useState<EquipSlot>("free");
-  const [equip, setEquip] = useState<EquipTransform>(DEFAULT_EQUIP.free);
-  const [showTransformPanel, setShowTransformPanel] = useState(true);
-  const [options, setOptions] = useState<ViewOptions>({
-    textured: true,
-    wireframe: false,
-    grid: false,
-    axes: false,
-    autoRotate: false,
-    darkBackground: true,
-    characterPreview: false,
-    ptAxisFix: true,
-    showcase: true,
-  });
-
-  const [loading, setLoading] = useState({
-    active: true,
-    progress: 8,
-    title: "Carregando modelo 3D",
-    detail: smdFile.name,
-  });
-
-  function applyManualObjectTransform(object: THREE.Object3D | null, transform: EquipTransform) {
-    if (!object) return;
-    object.position.set(transform.offsetX, transform.offsetY, transform.offsetZ);
-    object.rotation.set(degToRad(transform.rotationX), degToRad(transform.rotationY), degToRad(transform.rotationZ));
-    object.scale.setScalar(Math.max(0.01, transform.scale));
-  }
+  const selectedTextureName = useMemo(() => item?.textures[0]?.file.name || "", [item]);
 
   useEffect(() => {
-    applyManualObjectTransform(activeModelRef.current, equip);
-  }, [equip]);
-
-  useEffect(() => {
-    // Cada novo modelo precisa iniciar parado e sem preset torto.
-    // O usuário ajusta posição/rotação livremente no painel "Ajuste manual".
-    setEquipSlot("free");
-    setEquip(DEFAULT_EQUIP.free);
-    setOptions(prev => ({ ...prev, autoRotate: false }));
-    setCopiedPreset(false);
-  }, [smdFile]);
-
-  useEffect(() => {
-    const mountEl = mountRef.current;
-    if (!mountEl) return;
-    const host: HTMLDivElement = mountEl;
-
-    setErrors([]);
-    setInfo(null);
-    setLoading({ active: true, progress: 6, title: "Carregando modelo 3D", detail: smdFile.name });
-    resetViewRef.current = null;
-    activeModelRef.current = null;
+    const mount = mountRef.current;
+    if (!mount) return;
 
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(options.showcase ? 0x060814 : (options.darkBackground ? 0x070914 : 0x232a3a));
+    scene.background = null;
+    scene.fog = new THREE.Fog(0x050816, 80, 180);
+    sceneRef.current = scene;
 
-    const width = Math.max(1, host.clientWidth);
-    const height = Math.max(1, host.clientHeight);
-    const camera = new THREE.PerspectiveCamera(options.showcase ? 35 : 42, width / height, 0.01, 50000);
+    const camera = new THREE.PerspectiveCamera(38, 1, 0.1, 5000);
+    camera.position.set(0, 10, 34);
+    cameraRef.current = camera;
 
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, preserveDrawingBuffer: true });
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-    renderer.setSize(width, height);
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
     renderer.outputColorSpace = THREE.SRGBColorSpace;
-    renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = options.showcase ? 1.18 : 1.0;
-    renderer.shadowMap.enabled = options.showcase;
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    mount.appendChild(renderer.domElement);
     rendererRef.current = renderer;
-    host.appendChild(renderer.domElement);
 
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
     controls.dampingFactor = 0.08;
-    controls.screenSpacePanning = true;
-    controls.minDistance = 0.6;
-    controls.maxDistance = 9000;
     controls.autoRotate = false;
+    controls.enablePan = true;
+    controls.minDistance = 2;
+    controls.maxDistance = 1200;
+    controlsRef.current = controls;
 
-    scene.add(new THREE.HemisphereLight(0xdbe6ff, 0x202030, options.showcase ? 1.8 : 1.25));
-    const keyLight = new THREE.DirectionalLight(0xffffff, options.showcase ? 2.35 : 1.65);
-    keyLight.position.set(9, 13, 7);
-    keyLight.castShadow = options.showcase;
-    keyLight.shadow.mapSize.set(2048, 2048);
-    keyLight.shadow.camera.near = 0.5;
-    keyLight.shadow.camera.far = 120;
-    scene.add(keyLight);
-    const fillLight = new THREE.DirectionalLight(0x85a0ff, options.showcase ? 1.12 : 0.35);
-    fillLight.position.set(-8, 6, 6);
-    scene.add(fillLight);
-    const rimLight = new THREE.DirectionalLight(0xffb17a, options.showcase ? 1.16 : 0.75);
-    rimLight.position.set(-10, 7, -8);
-    scene.add(rimLight);
-    if (options.showcase) {
-      const topLight = new THREE.PointLight(0x8f7cff, 2.1, 42);
-      topLight.position.set(0, 9, 7);
-      scene.add(topLight);
-      scene.add(createShowcaseFloor());
-    }
+    const hemi = new THREE.HemisphereLight(0xdde8ff, 0x111018, 1.35);
+    scene.add(hemi);
+    const key = new THREE.DirectionalLight(0xffffff, 2.4);
+    key.position.set(18, 24, 20);
+    key.castShadow = true;
+    scene.add(key);
+    const fill = new THREE.DirectionalLight(0x8ea6ff, 1.1);
+    fill.position.set(-18, 8, -8);
+    scene.add(fill);
+    const rim = new THREE.DirectionalLight(0xffa36c, 0.9);
+    rim.position.set(-8, 14, 22);
+    scene.add(rim);
 
-    if (options.grid && !options.showcase) {
-      const grid = new THREE.GridHelper(options.characterPreview ? 18 : 80, options.characterPreview ? 18 : 40, 0x465075, 0x20263d);
-      scene.add(grid);
-    }
-    if (options.axes && !options.showcase) {
-      const axes = new THREE.AxesHelper(options.characterPreview ? 4 : 8);
-      scene.add(axes);
-    }
+    const gridHelper = new THREE.GridHelper(80, 40, 0x4f5d92, 0x1c2447);
+    gridHelper.name = "grid";
+    gridHelper.visible = false;
+    scene.add(gridHelper);
 
-    const rootGroup = new THREE.Group();
-    scene.add(rootGroup);
+    const axesHelper = new THREE.AxesHelper(18);
+    axesHelper.name = "axes";
+    axesHelper.visible = false;
+    scene.add(axesHelper);
 
-    let disposed = false;
-    let animationId = 0;
-    let loadingTimer = 0;
-    let rotatingGroup: any = null;
+    const ringMat = new THREE.MeshBasicMaterial({ color: 0x6174bd, transparent: true, opacity: 0.45, side: THREE.DoubleSide });
+    const ring = new THREE.Mesh(new THREE.RingGeometry(9.8, 10.05, 96), ringMat);
+    ring.name = "showcaseRing";
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.y = -0.015;
+    scene.add(ring);
 
-    function updateLoading(progress: number, detail: string) {
-      if (disposed) return;
-      setLoading({ active: true, progress: Math.max(3, Math.min(96, progress)), title: "Carregando modelo 3D", detail });
-    }
-
-    function finishLoading(detail = "Pronto") {
-      if (disposed) return;
-      setLoading({ active: true, progress: 100, title: "Carregando modelo 3D", detail });
-      loadingTimer = window.setTimeout(() => {
-        if (!disposed) setLoading(prev => ({ ...prev, active: false }));
-      }, 260);
-    }
-
-    function setCameraForSize(maxDim: number, targetY: number) {
-      const safeDim = Math.max(maxDim, 1);
-      const fov = camera.fov * (Math.PI / 180);
-      const distance = Math.abs(safeDim / Math.sin(fov / 2)) * (options.showcase ? 0.62 : 0.82);
-      camera.near = Math.max(0.01, distance / 2000);
-      camera.far = Math.max(5000, distance * 40);
-      if (options.showcase) {
-        camera.position.set(0, targetY + distance * 0.16, distance * 0.92);
-      } else {
-        camera.position.set(distance * 0.72, targetY + distance * 0.22, distance * 0.84);
-      }
+    const resize = () => {
+      const rect = mount.getBoundingClientRect();
+      const w = Math.max(1, rect.width);
+      const h = Math.max(1, rect.height);
+      renderer.setSize(w, h, false);
+      camera.aspect = w / h;
       camera.updateProjectionMatrix();
-      controls.target.set(0, targetY, 0);
-      controls.update();
-    }
+    };
+    resize();
+    const ro = new ResizeObserver(resize);
+    ro.observe(mount);
 
-    async function loadScene() {
-      const localErrors: string[] = [];
-      const effectiveCharacterPreview = false;
-      const skipEquipment = effectiveCharacterPreview && isSameFile(smdFile, characterFile);
-      let characterName = characterFile ? characterFile.name : "Sem personagem real";
-      let characterTexture = characterFile ? "aguardando leitura" : "Sem base real";
-
-      if (effectiveCharacterPreview) {
-        if (characterFile) {
-          try {
-            const character = await buildSmdModel(characterFile, extraFiles, options.textured, false, 0x9aa8ff, updateLoading);
-            if (disposed) return;
-            character.group.name = `Personagem real: ${characterFile.name}`;
-            character.group.scale.setScalar(REAL_CHARACTER_HEIGHT / Math.max(character.size.y, 1));
-            rootGroup.add(character.group);
-            characterName = characterFile.name;
-            characterTexture = character.textureStatus === "loaded"
-              ? character.matchedTexture?.name ?? "OK"
-              : character.textureName || "sem textura";
-            localErrors.push(...character.errors.map(error => `Personagem: ${error}`));
-          } catch (error) {
-            localErrors.push(`Erro ao ler personagem real ${characterFile.name}: ${(error as Error).message}`);
-            characterName = "Falha ao ler personagem real";
-            characterTexture = "Sem fallback artificial";
-          }
-        }
-      }
-
-      let item: BuiltSmdModel | null = null;
-      if (!skipEquipment) {
-        try {
-          item = await buildSmdModel(smdFile, extraFiles, options.textured, options.wireframe, 0xaab6ff, updateLoading);
-        } catch (error) {
-          const message = (error as Error).message || String(error);
-          setErrors(prev => [...prev, ...localErrors, `Erro ao ler SMD: ${message}`]);
-          setLoading({ active: false, progress: 0, title: "Falha ao carregar modelo", detail: message });
-          return;
-        }
-      } else {
-        try {
-          item = await buildSmdModel(smdFile, extraFiles, options.textured, options.wireframe, 0xaab6ff, updateLoading);
-        } catch {
-          item = null;
-        }
-      }
-
-      if (disposed) return;
-
-      if (options.ptAxisFix) {
-        rootGroup.rotation.x = -Math.PI / 2;
-      }
-
-      if (item && !skipEquipment) {
-        // Showcase trabalha com o objeto livre, sem rotação automática e sem preset escondido.
-        // O ajuste abaixo é atualizado em tempo real pelo painel "Ajuste manual" sem recarregar o SMD.
-        applyManualObjectTransform(item.group, equip);
-        activeModelRef.current = item.group;
-        rootGroup.add(item.group);
-      }
-
-      applyPremiumModelFlags(rootGroup);
-      rotatingGroup = effectiveCharacterPreview ? rootGroup : item?.group ?? rootGroup;
-
-      if (effectiveCharacterPreview) {
-        setCameraForSize(12.5, 4.7);
-        resetViewRef.current = () => setCameraForSize(12.5, 4.7);
-      } else if (item) {
-        const targetY = item.size.y * 0.48;
-        setCameraForSize(item.maxDim, targetY);
-        resetViewRef.current = () => setCameraForSize(item.maxDim, targetY);
-      }
-
-      const expectedTexture = item?.expectedTexture || `${baseName(smdFile.name)}.*`;
-      setInfo({
-        modelName: smdFile.name,
-        modelPath: smdPath,
-        modelSize: readableSize(smdFile.size),
-        triangles: item?.triangles ?? 0,
-        vertices: item?.vertices ?? 0,
-        expectedTexture,
-        matchedTexture: item?.matchedTexture?.name ?? "",
-        textureStatus: item?.textureStatus ?? "none",
-        objectCount: item?.objectCount ?? 0,
-        bounds: item?.bounds ?? "-",
-        assetCount: extraFiles.length,
-        previewLabel: options.showcase
-          ? "Showcase 3D"
-          : effectiveCharacterPreview
-            ? skipEquipment ? `Personagem real · ${characterName}` : `${characterName} · ${SLOT_LABELS[equipSlot]}`
-            : "Modelo isolado",
-        characterName,
-        characterTexture,
-      });
-
-      setErrors([...localErrors, ...(item?.errors ?? [])]);
-      finishLoading(item?.textureStatus === "loaded" ? "Modelo e textura carregados" : "Modelo carregado");
-    }
-
-    loadScene().catch(error => {
-      setErrors(prev => [...prev, `Erro inesperado: ${(error as Error).message}`]);
-      setLoading({ active: false, progress: 0, title: "Carregando modelo 3D", detail: "Falha ao carregar" });
-    });
-
-    function animate() {
-      animationId = requestAnimationFrame(animate);
-      // Auto giro removido por padrão: o modelo só se move por ação do usuário ou ajuste manual.
-      if (rotatingGroup) { /* parado */ }
+    const tick = () => {
       controls.update();
       renderer.render(scene, camera);
-    }
-    animate();
-
-    function onResize() {
-      const nextWidth = Math.max(1, host.clientWidth);
-      const nextHeight = Math.max(1, host.clientHeight);
-      camera.aspect = nextWidth / nextHeight;
-      camera.updateProjectionMatrix();
-      renderer.setSize(nextWidth, nextHeight);
-    }
-    window.addEventListener("resize", onResize);
+      frameRef.current = requestAnimationFrame(tick);
+    };
+    tick();
 
     return () => {
-      disposed = true;
-      if (loadingTimer) window.clearTimeout(loadingTimer);
-      cancelAnimationFrame(animationId);
-      window.removeEventListener("resize", onResize);
+      ro.disconnect();
+      if (frameRef.current) cancelAnimationFrame(frameRef.current);
       controls.dispose();
-      scene.traverse((obj: any) => {
-        if (obj.geometry) obj.geometry.dispose?.();
-        if (obj.material) {
-          if (Array.isArray(obj.material)) {
-            for (const mat of obj.material) {
-              mat.map?.dispose?.();
-              mat.dispose?.();
-            }
-          } else {
-            obj.material.map?.dispose?.();
-            obj.material.dispose?.();
+      renderer.dispose();
+      mount.removeChild(renderer.domElement);
+    };
+  }, []);
+
+  useEffect(() => {
+    const scene = sceneRef.current;
+    const axesObj = scene?.getObjectByName("axes");
+    const gridObj = scene?.getObjectByName("grid");
+    if (axesObj) axesObj.visible = axes;
+    if (gridObj) gridObj.visible = grid;
+  }, [axes, grid]);
+
+  useEffect(() => {
+    if (modelGroupRef.current) setGroupTransform(modelGroupRef.current, transform, eixoPT);
+  }, [transform, eixoPT]);
+
+  useEffect(() => {
+    const group = modelGroupRef.current;
+    if (!group) return;
+    group.traverse(obj => {
+      if (obj instanceof THREE.Mesh) {
+        const material = obj.material as THREE.MeshStandardMaterial;
+        material.wireframe = wireframe;
+        material.needsUpdate = true;
+      }
+    });
+  }, [wireframe]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      const scene = sceneRef.current;
+      if (!scene || !item) return;
+      setLoading(true);
+      setLoadingText("Lendo SMD");
+      setLoadingProgress(8);
+      setError(null);
+      setStats(null);
+      setTransform(DEFAULT_TRANSFORM);
+      controlsRef.current && (controlsRef.current.autoRotate = false);
+
+      if (modelGroupRef.current) {
+        scene.remove(modelGroupRef.current);
+        modelGroupRef.current.traverse(obj => {
+          if (obj instanceof THREE.Mesh) {
+            obj.geometry.dispose();
+            if (Array.isArray(obj.material)) obj.material.forEach(m => m.dispose());
+            else obj.material.dispose();
+          }
+        });
+        modelGroupRef.current = null;
+      }
+
+      try {
+        const buf = await item.smd.file.arrayBuffer();
+        if (cancelled) return;
+        setLoadingText("Interpretando malha");
+        setLoadingProgress(28);
+        const mesh = parseSmd(buf);
+        if (cancelled) return;
+
+        const geometry = new THREE.BufferGeometry();
+        geometry.setAttribute("position", new THREE.BufferAttribute(mesh.positions, 3));
+        if (mesh.uvs.length) geometry.setAttribute("uv", new THREE.BufferAttribute(mesh.uvs, 2));
+        geometry.setIndex(new THREE.BufferAttribute(mesh.indices, 1));
+        geometry.computeVertexNormals();
+        geometry.computeBoundingBox();
+        geometry.computeBoundingSphere();
+
+        setLoadingText("Procurando textura do pacote");
+        setLoadingProgress(58);
+        let texture: THREE.Texture | null = null;
+        const bestTexture = pickBestTexture(item, mesh.textureNames);
+        if (bestTexture && textureEnabled) {
+          setLoadingText(`Carregando textura ${bestTexture.name}`);
+          setLoadingProgress(74);
+          try {
+            texture = await textureFromFile(bestTexture) as THREE.Texture;
+            texture.colorSpace = THREE.SRGBColorSpace;
+            texture.anisotropy = 8;
+            texture.needsUpdate = true;
+          } catch (texErr) {
+            console.warn("Falha ao carregar textura", texErr);
+            texture = null;
           }
         }
-      });
-      renderer.dispose();
-      rendererRef.current = null;
-      if (renderer.domElement.parentElement === host) host.removeChild(renderer.domElement);
-    };
-  }, [smdFile, smdPath, extraFiles, characterFile, characterPath, options, characterClass]);
 
-  function toggleOption(name: keyof ViewOptions) {
-    setOptions(prev => ({ ...prev, [name]: !prev[name] }));
-  }
+        setLoadingText("Aplicando material");
+        setLoadingProgress(88);
+        const material = new THREE.MeshStandardMaterial({
+          color: texture ? 0xffffff : 0xaebcff,
+          map: texture || null,
+          roughness: 0.58,
+          metalness: 0.12,
+          side: THREE.DoubleSide,
+          wireframe,
+        });
 
-  function activateShowcase() {
-    setOptions(prev => {
-      if (prev.showcase) return { ...prev, showcase: false };
-      return {
-        ...prev,
-        showcase: true,
-        characterPreview: false,
-        textured: true,
-        wireframe: false,
-        grid: false,
-        axes: false,
-        darkBackground: true,
-        autoRotate: false,
-      };
-    });
-  }
+        const renderMesh = new THREE.Mesh(geometry, material);
+        renderMesh.castShadow = true;
+        renderMesh.receiveShadow = true;
 
-  function activateCharacterPreview() {
-    setOptions(prev => ({ ...prev, characterPreview: !prev.characterPreview, showcase: false }));
-  }
+        const group = new THREE.Group();
+        group.add(renderMesh);
+        setGroupTransform(group, DEFAULT_TRANSFORM, eixoPT);
+        scene.add(group);
+        modelGroupRef.current = group;
 
-  function toggleFullscreen() {
-    const element = mountRef.current?.parentElement;
-    if (!element) return;
-    if (document.fullscreenElement) {
-      document.exitFullscreen?.();
-    } else {
-      element.requestFullscreen?.();
+        fitCameraToObject(group);
+        const box = new THREE.Box3().setFromObject(group);
+        setStats({
+          triangles: mesh.indices.length / 3,
+          vertices: mesh.positions.length / 3,
+          objects: mesh.objectCount,
+          bounds: boundsText(box),
+          texture: bestTexture?.name || mesh.textureName || "sem textura",
+          status: texture ? "texturizado" : bestTexture ? "textura falhou" : "sem textura",
+        });
+        setLoadingProgress(100);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Falha ao carregar SMD.");
+      } finally {
+        if (!cancelled) setTimeout(() => setLoading(false), 200);
+      }
     }
-  }
+    load();
+    return () => { cancelled = true; };
+  }, [item, textureEnabled]);
 
-  function changeSlot(nextSlot: EquipSlot) {
-    setEquipSlot(nextSlot);
-    setEquip(DEFAULT_EQUIP[nextSlot]);
-    setCopiedPreset(false);
-  }
-
-  function updateEquip(name: keyof EquipTransform, value: number | boolean) {
-    setEquip(prev => ({ ...prev, [name]: value }));
-    setCopiedPreset(false);
-  }
-
-  function resetManualTransform() {
-    setEquipSlot("free");
-    setEquip(DEFAULT_EQUIP.free);
-    setCopiedPreset(false);
+  function fitCameraToObject(object: THREE.Object3D) {
+    const camera = cameraRef.current;
+    const controls = controlsRef.current;
+    if (!camera || !controls) return;
+    const box = new THREE.Box3().setFromObject(object);
+    const size = new THREE.Vector3();
+    const center = new THREE.Vector3();
+    box.getSize(size);
+    box.getCenter(center);
+    const maxSize = Math.max(size.x, size.y, size.z, 1);
+    const distance = maxSize * 1.65;
+    camera.position.set(center.x + distance * 0.35, center.y + maxSize * 0.2, center.z + distance);
+    controls.target.copy(center);
+    camera.near = Math.max(0.01, maxSize / 200);
+    camera.far = Math.max(1000, maxSize * 20);
+    camera.updateProjectionMatrix();
+    controls.update();
   }
 
   function exportPng() {
     const renderer = rendererRef.current;
     if (!renderer) return;
-    const link = document.createElement("a");
-    link.download = `${smdFile.name.replace(/\.[^.]+$/, "")}_${options.showcase ? "showcase" : options.characterPreview ? "character" : "preview"}.png`;
-    link.href = renderer.domElement.toDataURL("image/png");
-    link.click();
+    const a = document.createElement("a");
+    a.download = `${item?.displayName?.replace(/\.[^.]+$/, "") || "alucard-showcase"}.png`;
+    a.href = renderer.domElement.toDataURL("image/png");
+    a.click();
   }
 
-  async function copyPreset() {
-    const json = buildPresetJson(smdFile, equipSlot, equip, characterClass, characterFile);
-    try {
-      await navigator.clipboard.writeText(json);
-      setCopiedPreset(true);
-    } catch {
-      window.prompt("Copie o preset:", json);
-    }
+  function updateTransform(key: keyof ManualTransform, value: number) {
+    setTransform(prev => ({ ...prev, [key]: value }));
   }
-
-  const textureClass = info?.textureStatus === "loaded" ? "good"
-    : info?.textureStatus === "missing" ? "warn"
-    : info?.textureStatus === "error" ? "bad"
-    : "muted";
 
   return (
-    <div className={`viewer-shell ${options.showcase ? "showcase-mode" : ""}`}>
-      <div ref={mountRef} className="canvas-host" />
-      {loading.active && (
-        <div className="model-loading-overlay" aria-live="polite">
-          <div className="model-loading-card">
-            <div className="model-loading-title">{loading.title}</div>
-            <div className="model-loading-detail">{loading.detail}</div>
-            <div className="model-loading-bar"><span style={{ width: `${loading.progress}%` }} /></div>
-            <div className="model-loading-percent">{Math.round(loading.progress)}%</div>
-          </div>
-        </div>
-      )}
-      <div className="watermark">ALUCARD-TOOLS</div>
-
+    <div className="viewer-stage">
       <div className="viewer-toolbar">
-        <button type="button" className={options.showcase ? "active showcase-button" : "showcase-button"} onClick={activateShowcase}>Showcase</button>
-        <button type="button" className={options.textured ? "active" : ""} onClick={() => toggleOption("textured")}>Textura</button>
-        <button type="button" className={options.wireframe ? "active" : ""} onClick={() => toggleOption("wireframe")}>Wireframe</button>
-        <button type="button" className={options.grid ? "active" : ""} onClick={() => toggleOption("grid")}>Grid</button>
-        <button type="button" className={options.axes ? "active" : ""} onClick={() => toggleOption("axes")}>Eixos</button>
-        <button type="button" className={showTransformPanel ? "active" : ""} onClick={() => setShowTransformPanel(prev => !prev)}>Ajuste manual</button>
-        <button type="button" className={options.ptAxisFix ? "active" : ""} onClick={() => toggleOption("ptAxisFix")}>Eixo PT</button>
-        <button type="button" onClick={() => toggleOption("darkBackground")}>Fundo</button>
-        <button type="button" onClick={() => resetViewRef.current?.()}>Centralizar</button>
-        <button type="button" onClick={toggleFullscreen}>Tela cheia</button>
-        <button type="button" className="export" onClick={exportPng}>Exportar PNG</button>
+        <button className="tool active">Showcase</button>
+        <button className={`tool ${textureEnabled ? "active" : ""}`} onClick={() => setTextureEnabled(v => !v)}>Textura</button>
+        <button className={`tool ${wireframe ? "active" : ""}`} onClick={() => setWireframe(v => !v)}>Wireframe</button>
+        <button className={`tool ${grid ? "active" : ""}`} onClick={() => setGrid(v => !v)}>Grid</button>
+        <button className={`tool ${axes ? "active" : ""}`} onClick={() => setAxes(v => !v)}>Eixos</button>
+        <button className={`tool ${eixoPT ? "active" : ""}`} onClick={() => setEixoPT(v => !v)}>Eixo PT</button>
+        <button className="tool" onClick={() => modelGroupRef.current && fitCameraToObject(modelGroupRef.current)}>Centralizar</button>
+        <button className={`tool ${showManual ? "active" : ""}`} onClick={() => setShowManual(v => !v)}>Ajuste manual</button>
+        <button className="tool export" onClick={exportPng} disabled={!item}>Exportar PNG</button>
       </div>
 
-      <div className="help-pill">{options.showcase ? "Showcase: modelo parado · use Ajuste manual ou arraste a câmera" : "Mouse: girar · Scroll: zoom · Direito: mover"}</div>
+      <div ref={mountRef} className="canvas-host" />
+      <LoadingOverlay show={loading} title="Loading 3D model" text={loadingText} progress={loadingProgress} />
 
-      {/* Personagem preview removido: somente Showcase profissional para modelos isolados. */}
-
-
-
-      {showTransformPanel && info && (
-        <div className="manual-transform-panel">
-          <div className="manual-title">
-            <strong>Ajuste manual do objeto</strong>
-            <span>Move, gira e escala o objeto livremente. Auto giro fica desligado.</span>
-          </div>
-          <div className="manual-range-grid">
-            <label><span>X</span><input type="range" min="-80" max="80" step="0.1" value={equip.offsetX} onChange={event => updateEquip("offsetX", Number(event.target.value))} /><b>{equip.offsetX.toFixed(1)}</b></label>
-            <label><span>Y</span><input type="range" min="-80" max="80" step="0.1" value={equip.offsetY} onChange={event => updateEquip("offsetY", Number(event.target.value))} /><b>{equip.offsetY.toFixed(1)}</b></label>
-            <label><span>Z</span><input type="range" min="-80" max="80" step="0.1" value={equip.offsetZ} onChange={event => updateEquip("offsetZ", Number(event.target.value))} /><b>{equip.offsetZ.toFixed(1)}</b></label>
-            <label><span>Rot X</span><input type="range" min="-180" max="180" step="1" value={equip.rotationX} onChange={event => updateEquip("rotationX", Number(event.target.value))} /><b>{equip.rotationX.toFixed(0)}°</b></label>
-            <label><span>Rot Y</span><input type="range" min="-180" max="180" step="1" value={equip.rotationY} onChange={event => updateEquip("rotationY", Number(event.target.value))} /><b>{equip.rotationY.toFixed(0)}°</b></label>
-            <label><span>Rot Z</span><input type="range" min="-180" max="180" step="1" value={equip.rotationZ} onChange={event => updateEquip("rotationZ", Number(event.target.value))} /><b>{equip.rotationZ.toFixed(0)}°</b></label>
-            <label><span>Escala</span><input type="range" min="0.05" max="5" step="0.01" value={equip.scale} onChange={event => updateEquip("scale", Number(event.target.value))} /><b>{equip.scale.toFixed(2)}</b></label>
-          </div>
-          <div className="manual-actions">
-            <button type="button" onClick={resetManualTransform}>Reset objeto</button>
-            <button type="button" onClick={copyPreset}>{copiedPreset ? "Copiado" : "Copiar ajuste"}</button>
-          </div>
+      {!item && (
+        <div className="empty-viewer">
+          <div className="viewer-orb">3D</div>
+          <h2>Abra a pasta tmABCD ou um pacote de item</h2>
+          <p>O sistema vai montar pacotes usando o SMD principal e até 4 texturas relacionadas.</p>
         </div>
       )}
 
-      {options.showcase && info && (
-        <div className="showcase-panel">
-          <div className="showcase-kicker">ALUCARD-TOOLS SHOWCASE</div>
-          <h2>{info.modelName}</h2>
-          <p>{info.modelPath}</p>
+      {error && <div className="viewer-error"><b>Erro ao abrir modelo</b><span>{error}</span></div>}
+
+      {item && stats && (
+        <div className="showcase-card">
+          <span className="kicker">ALUCARD-TOOLS SHOWCASE</span>
+          <h2>{item.displayName}</h2>
+          <p>{item.smd.path}</p>
           <div className="showcase-stats">
-            <span><strong>{info.triangles.toLocaleString()}</strong> triângulos</span>
-            <span><strong>{info.vertices.toLocaleString()}</strong> vértices</span>
-            <span><strong>{info.objectCount.toLocaleString()}</strong> objetos</span>
-            <span><strong>{info.bounds}</strong> bounds</span>
+            <div><b>{stats.triangles.toLocaleString("pt-BR")}</b><span>triângulos</span></div>
+            <div><b>{stats.vertices.toLocaleString("pt-BR")}</b><span>vértices</span></div>
+            <div><b>{stats.objects}</b><span>objetos</span></div>
+            <div><b>{stats.bounds}</b><span>bounds</span></div>
           </div>
-          <div className="showcase-texture-row">
-            <span>Textura</span>
-            <strong className={textureClass}>
-              {info.textureStatus === "loaded" && info.matchedTexture}
-              {info.textureStatus === "missing" && `faltando: ${info.expectedTexture}`}
-              {info.textureStatus === "error" && "erro ao carregar"}
-              {info.textureStatus === "none" && "sem textura informada"}
-            </strong>
-          </div>
-          {info.textureStatus === "missing" && (
-            <div className="texture-fix-card">
-              <strong>Textura não importada</strong>
-              <span>Abra a pasta completa do cliente ou selecione também o arquivo <b>{info.expectedTexture}</b>.</span>
-            </div>
-          )}
+          <div className={`texture-status ${stats.status === "texturizado" ? "ok" : "warn"}`}>Textura: {stats.texture}</div>
         </div>
       )}
 
-      {options.showcase && (
-        <div className="showcase-footer">
-          <span>Arraste para girar</span>
-          <span>Scroll para zoom</span>
-          <span>Exportar PNG para catálogo</span>
+      {showManual && item && (
+        <div className="manual-panel">
+          <div className="section-head"><h2>Ajuste manual</h2><button onClick={() => setTransform(DEFAULT_TRANSFORM)}>Reset</button></div>
+          <Control label="X" min={-80} max={80} step={0.1} value={transform.x} onChange={v => updateTransform("x", v)} />
+          <Control label="Y" min={-80} max={80} step={0.1} value={transform.y} onChange={v => updateTransform("y", v)} />
+          <Control label="Z" min={-80} max={80} step={0.1} value={transform.z} onChange={v => updateTransform("z", v)} />
+          <Control label="Rot X" min={-180} max={180} step={1} value={transform.rx} onChange={v => updateTransform("rx", v)} />
+          <Control label="Rot Y" min={-180} max={180} step={1} value={transform.ry} onChange={v => updateTransform("ry", v)} />
+          <Control label="Rot Z" min={-180} max={180} step={1} value={transform.rz} onChange={v => updateTransform("rz", v)} />
+          <Control label="Escala" min={0.05} max={8} step={0.05} value={transform.scale} onChange={v => updateTransform("scale", v)} />
         </div>
       )}
-      {(info || errors.length > 0) && !options.showcase && (
-        <div className="diagnostic-panel">
-          {info && (
-            <div className="diagnostic-grid">
-              <div className="diagnostic-main">
-                <span className="label">Modelo</span>
-                <strong>{info.modelName}</strong>
-                <small>{info.modelPath}</small>
-              </div>
-              <div><span className="label">Preview</span><strong>{info.previewLabel}</strong></div>
-              <div><span className="label">Triângulos</span><strong>{info.triangles.toLocaleString()}</strong></div>
-              <div><span className="label">Vértices</span><strong>{info.vertices.toLocaleString()}</strong></div>
-              <div><span className="label">Objetos</span><strong>{info.objectCount.toLocaleString()}</strong></div>
-              <div><span className="label">Tamanho</span><strong>{info.modelSize}</strong></div>
-              <div><span className="label">Bounds</span><strong>{info.bounds}</strong></div>
-              <div><span className="label">Assets</span><strong>{info.assetCount.toLocaleString()}</strong></div>
-              <div className="diagnostic-texture">
-                <span className="label">Textura do item</span>
-                <strong className={textureClass}>
-                  {info.textureStatus === "loaded" && `OK: ${info.matchedTexture}`}
-                  {info.textureStatus === "missing" && `Faltando: ${info.expectedTexture}`}
-                  {info.textureStatus === "error" && `Erro: ${info.matchedTexture || info.expectedTexture}`}
-                  {info.textureStatus === "none" && "Não informada no SMD"}
-                </strong>
-              </div>
-              {options.characterPreview && (
-                <div className="diagnostic-texture character-diagnostic">
-                  <span className="label">Personagem</span>
-                  <strong>{info.characterName}</strong>
-                  <small>{info.characterTexture}</small>
-                </div>
-              )}
-            </div>
-          )}
 
-          {errors.length > 0 && (
-            <div className="error-box">
-              {errors.slice(0, 5).map((error, index) => <div key={`${error}-${index}`}>⚠ {error}</div>)}
-              {errors.length > 5 && <div>+{errors.length - 5} avisos</div>}
-            </div>
-          )}
-        </div>
-      )}
+      <div className="hint-row"><span>Arraste para girar câmera</span><span>Scroll para zoom</span><span>Objeto inicia parado</span></div>
     </div>
+  );
+}
+
+function Control({ label, value, min, max, step, onChange }: { label: string; value: number; min: number; max: number; step: number; onChange: (value: number) => void }) {
+  return (
+    <label className="control-row">
+      <span>{label}</span>
+      <input type="range" min={min} max={max} step={step} value={value} onChange={e => onChange(Number(e.target.value))} />
+      <b>{value.toFixed(label === "Escala" ? 2 : 1)}</b>
+    </label>
   );
 }

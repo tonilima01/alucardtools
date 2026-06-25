@@ -1,791 +1,122 @@
-import { useEffect, useMemo, useState, type InputHTMLAttributes } from "react";
+import { forwardRef, useMemo, useRef, useState } from "react";
+import { PackageList } from "./components/PackageList";
 import { SMDViewer } from "./components/SMDViewer";
-import { parseSmd } from "./lib/parseSmd";
+import { ItemPackagePanel } from "./components/ItemPackagePanel";
+import { LoadingOverlay } from "./components/LoadingOverlay";
+import { useClientLibrary } from "./hooks/useClientLibrary";
+import type { ItemPackage, ItemType } from "./types/itemPackage";
 import "./App.css";
 
-interface FolderInputProps extends InputHTMLAttributes<HTMLInputElement> {
+interface FolderInputProps extends React.InputHTMLAttributes<HTMLInputElement> {
   webkitdirectory?: string;
 }
 
-function FolderInput(props: FolderInputProps) {
-  return <input {...props} />;
-}
-
-interface FileEntry {
-  id: string;
-  file: File;
-  path: string;
-  name: string;
-  ext: string;
-}
-
-type CategoryFilter = "all" | "showcase" | "attack" | "defense" | "hair" | "wings" | "costume" | "other";
-type ModelKind = Exclude<CategoryFilter, "all" | "showcase">;
-
-interface ModelProfile {
-  kind: ModelKind;
-  label: string;
-  badge: string;
-  showcaseReady: boolean;
-  note: string;
-  action: string;
-}
-
-interface ImportState {
-  active: boolean;
-  progress: number;
-  title: string;
-  detail: string;
-}
-
-interface TextureLink {
-  expected: string;
-  found: FileEntry | null;
-  confidence: "exata" | "provavel" | "faltando";
-}
-
-interface RelatedFile {
-  entry: FileEntry;
-  role: "modelo" | "textura" | "asset";
-  reason: string;
-}
-
-interface ModelAnalysis {
-  loading: boolean;
-  textureNames: string[];
-  textureLinks: TextureLink[];
-  relatedFiles: RelatedFile[];
-  objectCount: number;
-  triangles: number;
-  vertices: number;
-  error: string;
-}
-
-const EMPTY_ANALYSIS: ModelAnalysis = {
-  loading: false,
-  textureNames: [],
-  textureLinks: [],
-  relatedFiles: [],
-  objectCount: 0,
-  triangles: 0,
-  vertices: 0,
-  error: "",
-};
-
-const FILTERS: Array<{ id: CategoryFilter; label: string; hint: string }> = [
-  { id: "all", label: "Todos", hint: "Todos os SMD" },
-  { id: "showcase", label: "Catálogo", hint: "Modelos bons para preview" },
-  { id: "attack", label: "Ataque", hint: "Armas: sword, axe, bow, staff..." },
-  { id: "defense", label: "Defesa", hint: "Escudos, armaduras, botas, luvas" },
-  { id: "hair", label: "Hair/Mask", hint: "Cabelo, máscara, capacete visual" },
-  { id: "wings", label: "Asas", hint: "Asas, capas e costas" },
-  { id: "costume", label: "Skins", hint: "Costume, set visual, roupas" },
-  { id: "other", label: "Outros", hint: "Modelos não classificados" },
-];
-
-const TEXTURE_EXTENSIONS = ["bmp", "tga", "dds", "png", "jpg", "jpeg"];
-
-function fileExt(fileName: string): string {
-  return fileName.split(".").pop()?.toLowerCase() ?? "";
-}
-
-function filePath(file: File): string {
-  return file.webkitRelativePath || file.name;
-}
-
-function fileId(file: File): string {
-  return `${filePath(file)}::${file.size}::${file.lastModified}`;
-}
-
-function toEntry(file: File): FileEntry {
-  return {
-    id: fileId(file),
-    file,
-    path: filePath(file),
-    name: file.name,
-    ext: fileExt(file.name),
-  };
-}
-
-function mergeEntries(prev: FileEntry[], incoming: FileEntry[]): FileEntry[] {
-  const map = new Map(prev.map(entry => [entry.id, entry]));
-  for (const entry of incoming) map.set(entry.id, entry);
-  return Array.from(map.values()).sort((a, b) => a.path.localeCompare(b.path));
-}
-
-function readableSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / 1024 / 1024).toFixed(2)} MB`;
-}
-
-function isTextureExt(ext: string): boolean {
-  return TEXTURE_EXTENSIONS.includes(ext);
-}
-
-function stem(name: string): string {
-  return name.replace(/\\/g, "/").split("/").pop()?.replace(/\.[^.]+$/, "").toLowerCase() ?? "";
-}
-
-function cleanName(name: string): string {
-  return stem(name).replace(/[^a-z0-9]/g, "");
-}
-
-function getProfile(entry: FileEntry): ModelProfile {
-  const s = stem(entry.name);
-  const compact = cleanName(entry.name);
-
-  // Armas / itens de ataque. Cobre a convenção comum do PT: itW* / itws / itwa / itwp / etc.
-  if (/^(itw|ws|wa|wp|wm|wb|wj|wd|wc|wh)/i.test(compact)
-    || /(weapon|sword|axe|bow|arco|javelin|staff|wand|dagger|claw|hammer|orb|pike|spear|mace|blade|scythe|foice|phantom|crossbow|gun|arma)/i.test(s)) {
-    return {
-      kind: "attack",
-      label: "Item de ataque",
-      badge: "Ataque",
-      showcaseReady: true,
-      note: "Modelo ideal para Showcase: arma isolada, giro automático, textura ligada e exportação PNG.",
-      action: "Use Showcase + Textura + Centralizar.",
-    };
-  }
-
-  // Hair, máscara e capacetes visuais antes de defesa, para não cair como armor.
-  if (/(hair|hairs|mask|msk|cap|hat|head|cabelo|face|helmetvisual|hs\b|hairs)/i.test(s)) {
-    return {
-      kind: "hair",
-      label: "Hair / máscara",
-      badge: "Hair",
-      showcaseReady: true,
-      note: "Bom para preview de visual de cabeça. Se aparecer pequeno, use Centralizar e ajuste zoom.",
-      action: "Bom para catálogo de visual/hair.",
-    };
-  }
-
-  if (/(wing|asa|back|costas|cape|manto|cloak)/i.test(s)) {
-    return {
-      kind: "wings",
-      label: "Asa / costas",
-      badge: "Asa",
-      showcaseReady: true,
-      note: "Ideal para preview grande, rotação e exportação PNG.",
-      action: "Use Auto giro e fundo escuro.",
-    };
-  }
-
-  // Defesa: itD* costuma ser visual/defesa. Inclui escudo, armor, boots, gloves etc.
-  if (/^(itd|ds|da|db|dg|df|dm|dr|dh)/i.test(compact)
-    || /(shield|shl|escudo|armor|armou?r|robe|dress|body|chest|boot|boots|glove|gaunt|defense|defesa|helm|helmet|bracelet|ring|amulet)/i.test(s)) {
-    return {
-      kind: "defense",
-      label: "Item de defesa",
-      badge: "Defesa",
-      showcaseReady: true,
-      note: "Escudo, armor, bota, luva ou parte defensiva. Para armaduras completas, o preview é isolado; personagem montado exige loader do client.",
-      action: "Bom para checar textura e forma do item.",
-    };
-  }
-
-  if (/(costume|skin|visual|xmas|santa|lpk|dragon|swim|wedding|hanbok|kimono|school|uniform|magic|inferno|traje|wc|brazil|argnt|franc|japan|pinoy|peru|spain|italy|chile|mexic|soldier)/i.test(s)) {
-    return {
-      kind: "costume",
-      label: "Skin / costume",
-      badge: "Skin",
-      showcaseReady: true,
-      note: "Funciona como peça isolada. Se for parte de personagem, pode precisar da montagem real do PristonTale.",
-      action: "Use como preview de peça ou diagnóstico.",
-    };
-  }
-
-  return {
-    kind: "other",
-    label: "Modelo SMD",
-    badge: "Showcase",
-    showcaseReady: true,
-    note: "Modelo genérico. Se a textura não aparecer, importe também BMP/TGA/DDS/PNG com o mesmo nome ou nome esperado pelo SMD.",
-    action: "Use busca por nome e painel de textura.",
-  };
-}
-
-function countByFilter(models: FileEntry[]) {
-  const base: Record<CategoryFilter, number> = {
-    all: models.length,
-    showcase: 0,
-    attack: 0,
-    defense: 0,
-    hair: 0,
-    wings: 0,
-    costume: 0,
-    other: 0,
-  };
-
-  for (const model of models) {
-    const profile = getProfile(model);
-    base[profile.kind] += 1;
-    if (profile.showcaseReady) base.showcase += 1;
-  }
-
-  return base;
-}
-
-function countTexturesByExt(entries: FileEntry[]) {
-  const out: Record<string, number> = { bmp: 0, tga: 0, dds: 0, png: 0, jpg: 0 };
-  for (const entry of entries) {
-    if (entry.ext === "jpeg") out.jpg += 1;
-    else if (entry.ext in out) out[entry.ext] += 1;
-  }
-  return out;
-}
-
-function sameFolder(pathA: string, pathB: string): boolean {
-  const folderA = pathA.replace(/\\/g, "/").split("/").slice(0, -1).join("/").toLowerCase();
-  const folderB = pathB.replace(/\\/g, "/").split("/").slice(0, -1).join("/").toLowerCase();
-  return folderA.length > 0 && folderA === folderB;
-}
-
-function displayPath(path: string, max = 54): string {
-  const normalized = path.replace(/\\/g, "/");
-  if (normalized.length <= max) return normalized;
-  return `…${normalized.slice(-(max - 1))}`;
-}
-
-function findTextureEntry(expected: string, textures: FileEntry[]): TextureLink {
-  const expectedFile = expected.replace(/\\/g, "/").split("/").pop()?.toLowerCase() ?? expected.toLowerCase();
-  const expectedBase = cleanName(expected);
-
-  const exact = textures.find(entry => entry.name.toLowerCase() === expectedFile);
-  if (exact) return { expected, found: exact, confidence: "exata" };
-
-  const sameBase = textures.find(entry => cleanName(entry.name) === expectedBase && expectedBase.length > 0);
-  if (sameBase) return { expected, found: sameBase, confidence: "provavel" };
-
-  const fuzzy = textures.find(entry => {
-    const key = cleanName(entry.name);
-    return expectedBase.length >= 5 && (key.includes(expectedBase) || expectedBase.includes(key));
-  });
-
-  if (fuzzy) return { expected, found: fuzzy, confidence: "provavel" };
-
-  return { expected, found: null, confidence: "faltando" };
-}
-
-function collectRelatedFiles(model: FileEntry, assets: FileEntry[], expectedTextures: string[], links: TextureLink[]): RelatedFile[] {
-  const output: RelatedFile[] = [];
-  const used = new Set<string>();
-  const modelKey = cleanName(model.name);
-  const expectedKeys = expectedTextures.map(cleanName).filter(Boolean);
-
-  for (const link of links) {
-    if (link.found && !used.has(link.found.id)) {
-      used.add(link.found.id);
-      output.push({
-        entry: link.found,
-        role: "textura",
-        reason: link.confidence === "exata" ? "Textura informada pelo SMD" : "Textura provável pelo nome",
-      });
-    }
-  }
-
-  for (const asset of assets) {
-    if (used.has(asset.id)) continue;
-    const assetKey = cleanName(asset.name);
-    const relatedByExpected = expectedKeys.some(key => key.length >= 4 && (assetKey === key || assetKey.includes(key) || key.includes(assetKey)));
-    const relatedByModel = modelKey.length >= 4 && (assetKey === modelKey || assetKey.includes(modelKey) || modelKey.includes(assetKey));
-    const relatedByFolder = sameFolder(model.path, asset.path);
-
-    if (relatedByExpected || relatedByModel || relatedByFolder) {
-      used.add(asset.id);
-      output.push({
-        entry: asset,
-        role: asset.ext === "smd" ? "modelo" : isTextureExt(asset.ext) ? "textura" : "asset",
-        reason: relatedByExpected ? "Relacionado à textura esperada" : relatedByModel ? "Mesmo código base do modelo" : "Está na mesma pasta do item",
-      });
-    }
-
-    if (output.length >= 18) break;
-  }
-
-  return output;
-}
+const FolderInput = forwardRef<HTMLInputElement, FolderInputProps>(function FolderInput(props, ref) {
+  return <input ref={ref} {...props} />;
+});
 
 export default function App() {
-  const [smdFiles, setSmdFiles] = useState<FileEntry[]>([]);
-  const [assetFiles, setAssetFiles] = useState<FileEntry[]>([]);
-  const [selectedId, setSelectedId] = useState("");
+  const folderInputRef = useRef<HTMLInputElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const { packages, stats, loading, progressText, progress, error, importFiles, clear } = useClientLibrary();
+  const [selected, setSelected] = useState<ItemPackage | null>(null);
   const [query, setQuery] = useState("");
-  const [filter, setFilter] = useState<CategoryFilter>("showcase");
+  const [filter, setFilter] = useState<ItemType | "todos" | "completo">("todos");
   const [dragging, setDragging] = useState(false);
-  const [importState, setImportState] = useState<ImportState>({
-    active: false,
-    progress: 0,
-    title: "Indexando biblioteca",
-    detail: "",
-  });
-  const [modelAnalysis, setModelAnalysis] = useState<ModelAnalysis>(EMPTY_ANALYSIS);
 
-  const selectedModel = smdFiles.find(entry => entry.id === selectedId) ?? smdFiles[0] ?? null;
-  const selectedProfile = selectedModel ? getProfile(selectedModel) : null;
-  const textureFiles = assetFiles.filter(entry => isTextureExt(entry.ext));
-  const counts = useMemo(() => countByFilter(smdFiles), [smdFiles]);
-  const textureStats = useMemo(() => countTexturesByExt(textureFiles), [textureFiles]);
-  const viewerAssets = useMemo(() => assetFiles.map(entry => entry.file), [assetFiles]);
+  const selectedStillExists = useMemo(() => selected && packages.some(p => p.id === selected.id), [packages, selected]);
+  if (selected && !selectedStillExists && packages.length === 0) setSelected(null);
 
-  const filteredModels = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    return smdFiles.filter(entry => {
-      const profile = getProfile(entry);
-      const matchesQuery = !q
-        || entry.path.toLowerCase().includes(q)
-        || entry.name.toLowerCase().includes(q)
-        || profile.label.toLowerCase().includes(q)
-        || profile.kind.toLowerCase().includes(q);
-      const matchesFilter = filter === "all"
-        || (filter === "showcase" ? profile.showcaseReady : profile.kind === filter);
-      return matchesQuery && matchesFilter;
-    });
-  }, [filter, query, smdFiles]);
-
-  const displayedModels = useMemo(() => filteredModels.slice(0, 240), [filteredModels]);
-  const hiddenModelCount = Math.max(0, filteredModels.length - displayedModels.length);
-
-  const selectedTextureHint = useMemo(() => {
-    if (!selectedModel) return null;
-    const modelBase = cleanName(selectedModel.name);
-    const exact = textureFiles.find(entry => cleanName(entry.name) === modelBase);
-    const partial = textureFiles.find(entry => {
-      const assetBase = cleanName(entry.name);
-      return assetBase.includes(modelBase) || modelBase.includes(assetBase);
-    });
-    return exact ?? partial ?? null;
-  }, [selectedModel, textureFiles]);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    async function analyzeSelectedModel() {
-      if (!selectedModel) {
-        setModelAnalysis(EMPTY_ANALYSIS);
-        return;
-      }
-
-      setModelAnalysis(prev => ({ ...prev, loading: true, error: "" }));
-
-      try {
-        const buffer = await selectedModel.file.arrayBuffer();
-        const parsed = parseSmd(buffer);
-        if (cancelled) return;
-
-        const textureNames = Array.from(new Set([parsed.textureName, ...parsed.textureNames].filter(Boolean)));
-        const textureLinks = textureNames.map(name => findTextureEntry(name, textureFiles));
-        const relatedCandidates = [
-          ...smdFiles.filter(entry => entry.id !== selectedModel.id),
-          ...assetFiles,
-        ];
-        const relatedFiles = collectRelatedFiles(selectedModel, relatedCandidates, textureNames, textureLinks);
-
-        setModelAnalysis({
-          loading: false,
-          textureNames,
-          textureLinks,
-          relatedFiles,
-          objectCount: parsed.objectCount,
-          triangles: Math.round(parsed.indices.length / 3),
-          vertices: Math.round(parsed.positions.length / 3),
-          error: "",
-        });
-      } catch (error) {
-        if (cancelled) return;
-        setModelAnalysis({
-          ...EMPTY_ANALYSIS,
-          loading: false,
-          error: (error as Error).message || String(error),
-        });
-      }
+  function handleFolderChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = e.target.files;
+    if (files?.length) {
+      setSelected(null);
+      importFiles(files, "replace");
     }
-
-    void analyzeSelectedModel();
-    return () => { cancelled = true; };
-  }, [assetFiles, selectedModel, smdFiles, textureFiles]);
-
-  async function processFiles(files: FileList | File[]) {
-    const fileArray = Array.from(files);
-    if (fileArray.length === 0) return;
-
-    setImportState({
-      active: true,
-      progress: 3,
-      title: "Indexando biblioteca do cliente",
-      detail: "Lendo SMD, BMP, TGA, DDS e PNG localmente. Nada é enviado ao servidor.",
-    });
-
-    const entries: FileEntry[] = [];
-    const chunkSize = 450;
-    for (let index = 0; index < fileArray.length; index += chunkSize) {
-      const chunk = fileArray.slice(index, index + chunkSize);
-      entries.push(...chunk.map(toEntry));
-      const progress = Math.min(92, Math.round(((index + chunk.length) / fileArray.length) * 86) + 6);
-      setImportState({
-        active: true,
-        progress,
-        title: "Indexando biblioteca do cliente",
-        detail: `${Math.min(index + chunk.length, fileArray.length).toLocaleString()} de ${fileArray.length.toLocaleString()} arquivos analisados`,
-      });
-      await new Promise(resolve => window.setTimeout(resolve, 0));
-    }
-
-    const smds = entries.filter(entry => entry.ext === "smd");
-    const assets = entries.filter(entry => entry.ext !== "smd");
-
-    if (smds.length > 0) {
-      setSmdFiles(prev => mergeEntries(prev, smds));
-      setSelectedId(current => current || smds[0].id);
-    }
-
-    if (assets.length > 0) {
-      setAssetFiles(prev => mergeEntries(prev, assets));
-    }
-
-    setImportState({
-      active: true,
-      progress: 100,
-      title: "Biblioteca carregada",
-      detail: `${smds.length.toLocaleString()} modelos e ${assets.length.toLocaleString()} assets encontrados`,
-    });
-    window.setTimeout(() => setImportState(prev => ({ ...prev, active: false })), 520);
+    e.target.value = "";
   }
 
-  function clearLibrary() {
-    setSmdFiles([]);
-    setAssetFiles([]);
-    setSelectedId("");
+  function handleFilesChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = e.target.files;
+    if (files?.length) importFiles(files, "append");
+    e.target.value = "";
+  }
+
+  function handleClear() {
+    clear();
+    setSelected(null);
     setQuery("");
-    setFilter("showcase");
+    setFilter("todos");
   }
 
-  async function loadDemo() {
-    try {
-      const [smdResponse, textureResponse] = await Promise.all([fetch("/itWA101.smd"), fetch("/itwa101.bmp")]);
-      if (!smdResponse.ok || !textureResponse.ok) throw new Error("Demo indisponível");
-      const smd = new File([await smdResponse.blob()], "itWA101.smd", { type: "application/octet-stream" });
-      const texture = new File([await textureResponse.blob()], "itwa101.bmp", { type: "image/bmp" });
-      const smdEntry = toEntry(smd);
-      setSmdFiles([smdEntry]);
-      setAssetFiles([toEntry(texture)]);
-      setSelectedId(smdEntry.id);
-      setQuery("");
-      setFilter("showcase");
-    } catch {
-      alert("Não foi possível carregar o exemplo embutido.");
-    }
+  function handleDrop(e: React.DragEvent) {
+    e.preventDefault();
+    setDragging(false);
+    if (e.dataTransfer.files.length) importFiles(e.dataTransfer.files, "append");
   }
 
   return (
-    <div className="app-shell studio-shell professional-shell">
-      <header className="topbar studio-header">
+    <div className={`app-shell ${dragging ? "dragging" : ""}`} onDragOver={e => { e.preventDefault(); setDragging(true); }} onDragLeave={() => setDragging(false)} onDrop={handleDrop}>
+      <header className="topbar">
         <div className="brand-block">
-          <span className="brand-mark">AT</span>
+          <div className="brand-mark">AT</div>
           <div>
             <h1>ALUCARD-TOOLS</h1>
-            <p>Preview profissional de itens SMD do PristonTale · arquivos lidos localmente</p>
+            <p>Item Package Studio para SMD do PristonTale · leitura local no navegador</p>
           </div>
         </div>
-
         <div className="top-actions">
-          <label className="action-button primary">
-            Abrir pasta tmABCD
-            <FolderInput
-              type="file"
-              webkitdirectory=""
-              multiple
-              onChange={event => {
-                if (event.target.files) void processFiles(event.target.files);
-                event.currentTarget.value = "";
-              }}
-            />
-          </label>
-          <label className="action-button">
-            Abrir arquivos
-            <input
-              type="file"
-              accept=".smd,.bmp,.tga,.dds,.png,.jpg,.jpeg,.SMD,.BMP,.TGA,.DDS,.PNG,.JPG,.JPEG"
-              multiple
-              onChange={event => {
-                if (event.target.files) void processFiles(event.target.files);
-                event.currentTarget.value = "";
-              }}
-            />
-          </label>
-          <button type="button" className="action-button ghost" onClick={loadDemo}>Exemplo</button>
-          <button type="button" className="action-button danger" onClick={clearLibrary} disabled={smdFiles.length === 0 && assetFiles.length === 0}>Limpar</button>
+          <button className="action-button primary" onClick={() => folderInputRef.current?.click()}>Abrir tmABCD / pasta do cliente</button>
+          <button className="action-button" onClick={() => fileInputRef.current?.click()}>Adicionar arquivos</button>
+          <button className="action-button ghost" onClick={() => alert("Use uma pasta contendo .smd + BMP/TGA/DDS/PNG. O sistema monta pacotes automaticamente e mostra quais arquivos formam cada item.")}>Ajuda</button>
+          <button className="action-button danger" onClick={handleClear}>Limpar</button>
         </div>
       </header>
 
-      <main
-        className={`workspace studio-workspace ${dragging ? "dragging" : ""}`}
-        onDragOver={event => {
-          event.preventDefault();
-          setDragging(true);
-        }}
-        onDragLeave={() => setDragging(false)}
-        onDrop={event => {
-          event.preventDefault();
-          setDragging(false);
-          void processFiles(event.dataTransfer.files);
-        }}
-      >
-        <aside className="studio-left professional-left">
-          <section className="stat-grid compact-stats">
-            <div><strong>{smdFiles.length.toLocaleString()}</strong><span>modelos SMD</span></div>
-            <div><strong>{textureFiles.length.toLocaleString()}</strong><span>texturas</span></div>
+      <FolderInput ref={folderInputRef} type="file" multiple webkitdirectory="true" onChange={handleFolderChange} />
+      <input ref={fileInputRef} type="file" multiple accept=".smd,.bmp,.tga,.dds,.png,.jpg,.jpeg" onChange={handleFilesChange} />
+
+      <main className="workspace">
+        <aside className="left-panel">
+          <div className="stat-grid">
+            <div><strong>{stats.smdCount.toLocaleString("pt-BR")}</strong><span>modelos SMD</span></div>
+            <div><strong>{stats.textureCount.toLocaleString("pt-BR")}</strong><span>texturas</span></div>
+          </div>
+
+          <section className="flow-card">
+            <div className="section-head"><h2>Fluxo correto</h2><span>local</span></div>
+            <ol>
+              <li>Abrir a pasta <b>tmABCD</b> ou a pasta do item.</li>
+              <li>Pesquisar por código: <b>itws</b>, <b>itwd</b>, <b>DA399</b>, <b>hair</b>.</li>
+              <li>Selecionar pacote, ajustar posição e exportar PNG.</li>
+            </ol>
+            <p className="privacy-note">Nada é enviado ao servidor. Os arquivos ficam no PC do cliente.</p>
           </section>
 
-          <section className="panel upload-guide professional-guide">
-            <div className="panel-title-row">
-              <h2>Fluxo correto</h2>
-              <span>local</span>
-            </div>
-            <div className="guide-steps">
-              <div><strong>1</strong><span>Abrir a <b>tmABCD</b> completa do cliente.</span></div>
-              <div><strong>2</strong><span>Filtrar por <b>Ataque</b>, <b>Defesa</b>, <b>Hair</b> ou buscar o código.</span></div>
-              <div><strong>3</strong><span>Selecionar o SMD e conferir o pacote do item no painel direito.</span></div>
-            </div>
-            <p className="privacy-note">SMD, BMP, TGA, DDS, PNG e JPG são lidos no navegador. Nada é enviado ao servidor.</p>
-          </section>
-
-          <section className="panel library-panel professional-library">
-            <div className="panel-title-row">
-              <h2>Biblioteca do cliente</h2>
-              <span>{filteredModels.length.toLocaleString()}/{smdFiles.length.toLocaleString()}</span>
-            </div>
-
-            <input
-              className="search-input"
-              value={query}
-              onChange={event => setQuery(event.target.value)}
-              placeholder="Buscar: itws, itda, hair, shield, wing..."
-            />
-
-            <div className="filter-tabs studio-tabs category-tabs">
-              {FILTERS.map(item => (
-                <button
-                  key={item.id}
-                  type="button"
-                  title={item.hint}
-                  className={filter === item.id ? "active" : ""}
-                  onClick={() => setFilter(item.id)}
-                >
-                  {item.label}
-                  <small>{counts[item.id].toLocaleString()}</small>
-                </button>
-              ))}
-            </div>
-
-            {hiddenModelCount > 0 && (
-              <div className="list-warning">
-                Mostrando 240 de {filteredModels.length.toLocaleString()}. Use a busca para filtrar a tmABCD.
-              </div>
-            )}
-
-            <div className="model-list studio-model-list professional-model-list">
-              {displayedModels.length > 0 ? displayedModels.map(entry => {
-                const active = selectedModel?.id === entry.id;
-                const profile = getProfile(entry);
-                return (
-                  <button
-                    key={entry.id}
-                    type="button"
-                    className={`model-card studio-model-card professional-model-card kind-${profile.kind} ${active ? "active" : ""}`}
-                    onClick={() => setSelectedId(entry.id)}
-                  >
-                    <span className="model-card-head">
-                      <span className="model-name">{entry.name}</span>
-                      <span className={`model-badge badge-${profile.kind}`}>{profile.badge}</span>
-                    </span>
-                    <span className="model-path">{entry.path}</span>
-                    <span className="model-meta">{readableSize(entry.file.size)} · {profile.label}</span>
-                  </button>
-                );
-              }) : (
-                <div className="empty-small">
-                  Nenhum .smd nesse filtro. Abra a tmABCD ou uma pasta contendo modelo 3D e texturas.
-                </div>
-              )}
-            </div>
-          </section>
+          <PackageList packages={packages} selected={selected} query={query} filter={filter} onQueryChange={setQuery} onFilterChange={setFilter} onSelect={setSelected} />
         </aside>
 
-        <section className="studio-viewer professional-viewer">
-          {selectedModel ? (
-            <SMDViewer
-              key={selectedModel.id}
-              smdFile={selectedModel.file}
-              smdPath={selectedModel.path}
-              extraFiles={viewerAssets}
-            />
-          ) : (
-            <div className="drop-hero studio-hero professional-hero">
+        <section className="viewer-column">
+          {packages.length === 0 ? (
+            <div className="drop-hero">
               <div className="orb">3D</div>
-              <h2>Abra a pasta do cliente para gerar preview profissional</h2>
-              <p>Selecione a tmABCD ou uma pasta com SMD e texturas. Depois filtre por Ataque, Defesa, Hair, Asas ou Skins.</p>
+              <h2>Abra a pasta do cliente</h2>
+              <p>Selecione a <b>tmABCD</b> inteira ou uma pasta menor do item. O sistema cria pacotes com SMD + 1 a 4 texturas automaticamente.</p>
               <div className="hero-actions">
-                <label className="action-button primary large">
-                  Abrir pasta tmABCD
-                  <FolderInput
-                    type="file"
-                    webkitdirectory=""
-                    multiple
-                    onChange={event => {
-                      if (event.target.files) void processFiles(event.target.files);
-                      event.currentTarget.value = "";
-                    }}
-                  />
-                </label>
-                <label className="action-button large">
-                  Abrir SMD + textura
-                  <input
-                    type="file"
-                    accept=".smd,.bmp,.tga,.dds,.png,.jpg,.jpeg,.SMD,.BMP,.TGA,.DDS,.PNG,.JPG,.JPEG"
-                    multiple
-                    onChange={event => {
-                      if (event.target.files) void processFiles(event.target.files);
-                      event.currentTarget.value = "";
-                    }}
-                  />
-                </label>
+                <button className="action-button primary large" onClick={() => folderInputRef.current?.click()}>Abrir tmABCD</button>
+                <button className="action-button large" onClick={() => fileInputRef.current?.click()}>Adicionar arquivos</button>
               </div>
-              <button type="button" className="demo-link" onClick={loadDemo}>Carregar exemplo rápido</button>
             </div>
+          ) : (
+            <SMDViewer item={selected} />
           )}
         </section>
 
-        <aside className="studio-right professional-right">
-          <section className="panel inspector-card professional-inspector item-package-panel">
-            <div className="panel-title-row">
-              <h2>Pacote do item</h2>
-              <span>{selectedModel ? "mapeado" : "vazio"}</span>
-            </div>
-            {selectedModel && selectedProfile ? (
-              <div className="inspector-content">
-                <div className="selected-heading">
-                  <strong className="inspector-title">{selectedModel.name}</strong>
-                  <span className={`model-badge badge-${selectedProfile.kind}`}>{selectedProfile.badge}</span>
-                </div>
-                <p className="selected-path">{selectedModel.path}</p>
-
-                <div className="package-block primary-file">
-                  <h3>Arquivo principal</h3>
-                  <div className="package-row">
-                    <span className="file-pill smd">SMD</span>
-                    <div>
-                      <strong>{selectedModel.name}</strong>
-                      <small>{displayPath(selectedModel.path, 62)} · {readableSize(selectedModel.file.size)}</small>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="package-block">
-                  <h3>Texturas usadas por este SMD</h3>
-                  {modelAnalysis.loading && <div className="package-hint">Analisando o SMD para descobrir BMP/TGA/DDS/PNG...</div>}
-                  {!modelAnalysis.loading && modelAnalysis.textureLinks.length > 0 && modelAnalysis.textureLinks.map(link => (
-                    <div key={link.expected} className={`package-row ${link.found ? "found" : "missing"}`}>
-                      <span className={`file-pill ${link.found ? "texture" : "missing"}`}>{link.found?.ext?.toUpperCase() || "FALTA"}</span>
-                      <div>
-                        <strong>{link.expected}</strong>
-                        <small>
-                          {link.found
-                            ? `${link.confidence === "exata" ? "encontrada" : "provável"}: ${displayPath(link.found.path, 62)}`
-                            : "não encontrada na pasta carregada"}
-                        </small>
-                      </div>
-                    </div>
-                  ))}
-                  {!modelAnalysis.loading && modelAnalysis.textureLinks.length === 0 && (
-                    <div className="package-hint warn-text">O SMD não informou textura. A ferramenta tentará usar uma textura com o mesmo nome base.</div>
-                  )}
-                </div>
-
-                <div className="package-block">
-                  <h3>Arquivos que podem compor o item</h3>
-                  {modelAnalysis.relatedFiles.length > 0 ? modelAnalysis.relatedFiles.slice(0, 10).map(item => (
-                    <div key={item.entry.id} className="package-row compact">
-                      <span className={`file-pill ${item.role === "modelo" ? "smd" : item.role === "textura" ? "texture" : "asset"}`}>{item.entry.ext.toUpperCase()}</span>
-                      <div>
-                        <strong>{item.entry.name}</strong>
-                        <small>{item.reason} · {displayPath(item.entry.path, 58)}</small>
-                      </div>
-                    </div>
-                  )) : (
-                    <div className="package-hint">Nenhum arquivo relacionado além do SMD foi identificado.</div>
-                  )}
-                </div>
-
-                <div className="kv-grid pro-kv compact-kv">
-                  <span>Categoria</span><strong>{selectedProfile.label}</strong>
-                  <span>Triângulos</span><strong>{modelAnalysis.triangles ? modelAnalysis.triangles.toLocaleString() : "-"}</strong>
-                  <span>Vértices</span><strong>{modelAnalysis.vertices ? modelAnalysis.vertices.toLocaleString() : "-"}</strong>
-                  <span>Objetos</span><strong>{modelAnalysis.objectCount || "-"}</strong>
-                </div>
-
-                {modelAnalysis.error && <div className="package-error">Erro ao analisar SMD: {modelAnalysis.error}</div>}
-
-                <div className="recommendation-box professional-recommendation">
-                  <strong>{selectedProfile.action}</strong>
-                  <p>{selectedProfile.note}</p>
-                </div>
-              </div>
-            ) : (
-              <div className="empty-small">Nenhum modelo selecionado.</div>
-            )}
-          </section>
-
-          <section className="panel usage-card professional-usage">
-            <div className="panel-title-row">
-              <h2>Classificação</h2>
-              <span>automática</span>
-            </div>
-            <div className="usage-list pro-usage-list compact-usage">
-              <div><strong>Ataque</strong><span>Armas: itW*, sword, axe, bow, staff, javelin.</span></div>
-              <div><strong>Defesa</strong><span>Escudo, armor, bota, luva, robe e partes defensivas.</span></div>
-              <div><strong>Hair/Mask</strong><span>Cabelo, máscara, cap, head e visual de cabeça.</span></div>
-              <div><strong>Texturas</strong><span>BMP, TGA, DDS, PNG e JPG importados junto do SMD.</span></div>
-            </div>
-          </section>
-
-          <section className="panel texture-panel studio-assets professional-assets">
-            <div className="panel-title-row">
-              <h2>Texturas importadas</h2>
-              <span>{textureFiles.length.toLocaleString()}</span>
-            </div>
-            <div className="texture-stats">
-              <span>BMP <b>{textureStats.bmp}</b></span>
-              <span>TGA <b>{textureStats.tga}</b></span>
-              <span>DDS <b>{textureStats.dds}</b></span>
-              <span>PNG <b>{textureStats.png}</b></span>
-              <span>JPG <b>{textureStats.jpg}</b></span>
-            </div>
-            <div className="asset-list">
-              {textureFiles.slice(0, 120).map(entry => (
-                <div key={entry.id} className="asset-row">
-                  <span>{entry.name}</span>
-                  <small>{entry.ext || "file"}</small>
-                </div>
-              ))}
-              {textureFiles.length > 120 && <div className="asset-more">+{textureFiles.length - 120} texturas</div>}
-              {textureFiles.length === 0 && <div className="empty-small">BMP/TGA/DDS/PNG/JPG aparecem aqui quando forem importados.</div>}
-            </div>
-          </section>
-        </aside>
-
-        {importState.active && (
-          <div className="app-loading-overlay" aria-live="polite">
-            <div className="app-loading-card">
-              <div className="app-loading-icon">AT</div>
-              <h3>{importState.title}</h3>
-              <p>{importState.detail}</p>
-              <div className="app-loading-bar"><span style={{ width: `${importState.progress}%` }} /></div>
-              <small>{Math.round(importState.progress)}%</small>
-            </div>
-          </div>
-        )}
+        <ItemPackagePanel item={selected} />
       </main>
+
+      <LoadingOverlay show={loading} title="Indexando biblioteca do cliente" text={progressText} progress={progress} />
+      {error && <div className="toast-error">{error}</div>}
     </div>
   );
 }
