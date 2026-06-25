@@ -447,7 +447,7 @@ export function SMDViewer({ smdFile, smdPath, extraFiles, characterFile = null, 
 
     async function loadScene() {
       const localErrors: string[] = [];
-      const effectiveCharacterPreview = options.characterPreview && !options.showcase;
+      const effectiveCharacterPreview = false;
       const skipEquipment = effectiveCharacterPreview && isSameFile(smdFile, characterFile);
       let characterName = characterFile ? characterFile.name : "Sem personagem real";
       let characterTexture = characterFile ? "aguardando leitura" : "Sem base real";
@@ -666,7 +666,6 @@ export function SMDViewer({ smdFile, smdPath, extraFiles, characterFile = null, 
 
       <div className="viewer-toolbar">
         <button type="button" className={options.showcase ? "active showcase-button" : "showcase-button"} onClick={activateShowcase}>Showcase</button>
-        <button type="button" className={options.characterPreview ? "active" : ""} onClick={activateCharacterPreview}>Personagem</button>
         <button type="button" className={options.textured ? "active" : ""} onClick={() => toggleOption("textured")}>Textura</button>
         <button type="button" className={options.wireframe ? "active" : ""} onClick={() => toggleOption("wireframe")}>Wireframe</button>
         <button type="button" className={options.grid ? "active" : ""} onClick={() => toggleOption("grid")}>Grid</button>
@@ -681,51 +680,7 @@ export function SMDViewer({ smdFile, smdPath, extraFiles, characterFile = null, 
 
       <div className="help-pill">{options.showcase ? "Showcase: giro premium · zoom suave · exporte PNG" : "Mouse: girar · Scroll: zoom · Direito: mover"}</div>
 
-      {options.characterPreview && !options.showcase && (
-        <div className="equip-panel">
-          <div className="equip-title">
-            <strong>Preview no personagem</strong>
-            <span>{info?.characterName ?? (characterFile ? characterFile.name : "Sem personagem real")}</span>
-          </div>
-
-          <div className="real-character-status">
-            <span>Base</span>
-            <strong>{characterFile ? "SMD real" : "Sem base real"}</strong>
-            {characterFile && <small>{characterPath || characterFile.name}</small>}
-          </div>
-
-          {!characterFile && (
-            <div className="real-character-warning">Selecione um SMD real em “Personagem real” para usar este modo. Não há manequim artificial.</div>
-          )}
-
-          <label>
-            Slot
-            <select value={equipSlot} onChange={event => changeSlot(event.target.value as EquipSlot)}>
-              {Object.entries(SLOT_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-            </select>
-          </label>
-
-          <label className="check-row">
-            <input type="checkbox" checked={equip.autoFit} onChange={event => updateEquip("autoFit", event.target.checked)} />
-            Auto ajustar escala
-          </label>
-
-          <div className="range-grid">
-            <label>X <input type="range" min="-5" max="5" step="0.05" value={equip.offsetX} onChange={event => updateEquip("offsetX", Number(event.target.value))} /><span>{equip.offsetX.toFixed(2)}</span></label>
-            <label>Y <input type="range" min="-5" max="5" step="0.05" value={equip.offsetY} onChange={event => updateEquip("offsetY", Number(event.target.value))} /><span>{equip.offsetY.toFixed(2)}</span></label>
-            <label>Z <input type="range" min="-5" max="5" step="0.05" value={equip.offsetZ} onChange={event => updateEquip("offsetZ", Number(event.target.value))} /><span>{equip.offsetZ.toFixed(2)}</span></label>
-            <label>Rot X <input type="range" min="-180" max="180" step="1" value={equip.rotationX} onChange={event => updateEquip("rotationX", Number(event.target.value))} /><span>{equip.rotationX}°</span></label>
-            <label>Rot Y <input type="range" min="-180" max="180" step="1" value={equip.rotationY} onChange={event => updateEquip("rotationY", Number(event.target.value))} /><span>{equip.rotationY}°</span></label>
-            <label>Rot Z <input type="range" min="-180" max="180" step="1" value={equip.rotationZ} onChange={event => updateEquip("rotationZ", Number(event.target.value))} /><span>{equip.rotationZ}°</span></label>
-            <label>Escala <input type="range" min="0.05" max="4" step="0.05" value={equip.scale} onChange={event => updateEquip("scale", Number(event.target.value))} /><span>{equip.scale.toFixed(2)}</span></label>
-          </div>
-
-          <div className="equip-actions">
-            <button type="button" onClick={() => setEquip(DEFAULT_EQUIP[equipSlot])}>Reset slot</button>
-            <button type="button" onClick={copyPreset}>{copiedPreset ? "Copiado" : "Copiar preset"}</button>
-          </div>
-        </div>
-      )}
+      {/* Personagem preview removido: somente Showcase profissional para modelos isolados. */}
 
 
       {options.showcase && info && (

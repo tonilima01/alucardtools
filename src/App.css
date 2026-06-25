@@ -1111,3 +1111,30 @@ input[type="file"] { display: none; }
   font-size: 12px;
   line-height: 1.4;
 }
+
+
+/* Patch profissional: esconder módulos de personagem quebrados até portar loader real do client */
+.embedded-panel,
+.character-panel,
+.compatibility-panel {
+  display: none !important;
+}
+
+/* limpar menu visual antigo */
+.viewer-toolbar button:nth-child(2) {
+}
+
+.sidebar .panel:first-of-type + .panel + .panel {
+  margin-top: 0;
+}
+
+.viewer-shell.showcase-mode .canvas-host {
+  background:
+    radial-gradient(circle at 50% 40%, rgba(121, 102, 255, 0.18), transparent 34%),
+    linear-gradient(180deg, #080b17 0%, #050711 100%);
+}
+
+.showcase-panel {
+  backdrop-filter: blur(18px);
+  border: 1px solid rgba(130, 150, 255, 0.24);
+}
