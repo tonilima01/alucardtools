@@ -22,6 +22,7 @@ interface ViewOptions {
   characterPreview: boolean;
   ptAxisFix: boolean;
   htmlDoll: boolean;
+  showcase: boolean;
 }
 
 type EquipSlot = "free" | "weapon" | "shield" | "helmet" | "armor" | "back";
@@ -209,6 +210,57 @@ function makeMaterial(color: number, opacity = 1, metalness = 0.06) {
     transparent: opacity < 1,
     opacity,
   });
+}
+
+function applyPremiumModelFlags(group: any) {
+  group.traverse((obj: any) => {
+    if (obj?.isMesh) {
+      obj.castShadow = true;
+      obj.receiveShadow = true;
+      if (obj.material) {
+        const materials = Array.isArray(obj.material) ? obj.material : [obj.material];
+        for (const mat of materials) {
+          if (mat) {
+            mat.needsUpdate = true;
+          }
+        }
+      }
+    }
+  });
+}
+
+function createShowcaseFloor() {
+  const group = new THREE.Group();
+  const shadow = new THREE.Mesh(
+    new THREE.CircleGeometry(14, 96),
+    new THREE.MeshBasicMaterial({
+      color: 0x10162b,
+      transparent: true,
+      opacity: 0.64,
+      depthWrite: false,
+    }),
+  );
+  shadow.rotation.x = -Math.PI / 2;
+  shadow.position.y = -0.015;
+  group.add(shadow);
+
+  const ring = new THREE.Mesh(
+    new THREE.TorusGeometry(4.9, 0.018, 8, 160),
+    new THREE.MeshBasicMaterial({ color: 0x7d8cff, transparent: true, opacity: 0.42 }),
+  );
+  ring.rotation.x = Math.PI / 2;
+  ring.position.y = 0.018;
+  group.add(ring);
+
+  const inner = new THREE.Mesh(
+    new THREE.TorusGeometry(2.7, 0.012, 8, 140),
+    new THREE.MeshBasicMaterial({ color: 0xff7a3d, transparent: true, opacity: 0.28 }),
+  );
+  inner.rotation.x = Math.PI / 2;
+  inner.position.y = 0.021;
+  group.add(inner);
+
+  return group;
 }
 
 function createMannequin(characterClass: CharacterClass) {
@@ -439,6 +491,7 @@ export function SMDViewer({ smdFile, smdPath, extraFiles, characterFile = null, 
     characterPreview: true,
     ptAxisFix: false,
     htmlDoll: false,
+    showcase: false,
   });
 
   useEffect(() => {
@@ -458,16 +511,20 @@ export function SMDViewer({ smdFile, smdPath, extraFiles, characterFile = null, 
     resetViewRef.current = null;
 
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(options.darkBackground ? 0x070914 : 0x232a3a);
+    scene.background = new THREE.Color(options.showcase ? 0x060814 : (options.darkBackground ? 0x070914 : 0x232a3a));
 
     const width = Math.max(1, host.clientWidth);
     const height = Math.max(1, host.clientHeight);
-    const camera = new THREE.PerspectiveCamera(42, width / height, 0.01, 50000);
+    const camera = new THREE.PerspectiveCamera(options.showcase ? 35 : 42, width / height, 0.01, 50000);
 
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, preserveDrawingBuffer: true });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     renderer.setSize(width, height);
     renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = options.showcase ? 1.18 : 1.0;
+    renderer.shadowMap.enabled = options.showcase;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     rendererRef.current = renderer;
     host.appendChild(renderer.domElement);
 
@@ -475,20 +532,36 @@ export function SMDViewer({ smdFile, smdPath, extraFiles, characterFile = null, 
     controls.enableDamping = true;
     controls.dampingFactor = 0.08;
     controls.screenSpacePanning = true;
+    controls.minDistance = 0.6;
+    controls.maxDistance = 9000;
+    controls.autoRotate = false;
 
-    scene.add(new THREE.HemisphereLight(0xdbe6ff, 0x202030, 1.25));
-    const keyLight = new THREE.DirectionalLight(0xffffff, 1.65);
-    keyLight.position.set(9, 12, 7);
+    scene.add(new THREE.HemisphereLight(0xdbe6ff, 0x202030, options.showcase ? 1.8 : 1.25));
+    const keyLight = new THREE.DirectionalLight(0xffffff, options.showcase ? 2.35 : 1.65);
+    keyLight.position.set(9, 13, 7);
+    keyLight.castShadow = options.showcase;
+    keyLight.shadow.mapSize.set(2048, 2048);
+    keyLight.shadow.camera.near = 0.5;
+    keyLight.shadow.camera.far = 120;
     scene.add(keyLight);
-    const rimLight = new THREE.DirectionalLight(0x8aa0ff, 0.75);
+    const fillLight = new THREE.DirectionalLight(0x85a0ff, options.showcase ? 1.12 : 0.35);
+    fillLight.position.set(-8, 6, 6);
+    scene.add(fillLight);
+    const rimLight = new THREE.DirectionalLight(0xffb17a, options.showcase ? 1.16 : 0.75);
     rimLight.position.set(-10, 7, -8);
     scene.add(rimLight);
+    if (options.showcase) {
+      const topLight = new THREE.PointLight(0x8f7cff, 2.1, 42);
+      topLight.position.set(0, 9, 7);
+      scene.add(topLight);
+      scene.add(createShowcaseFloor());
+    }
 
-    if (options.grid) {
+    if (options.grid && !options.showcase) {
       const grid = new THREE.GridHelper(options.characterPreview ? 18 : 80, options.characterPreview ? 18 : 40, 0x465075, 0x20263d);
       scene.add(grid);
     }
-    if (options.axes) {
+    if (options.axes && !options.showcase) {
       const axes = new THREE.AxesHelper(options.characterPreview ? 4 : 8);
       scene.add(axes);
     }
@@ -503,10 +576,14 @@ export function SMDViewer({ smdFile, smdPath, extraFiles, characterFile = null, 
     function setCameraForSize(maxDim: number, targetY: number) {
       const safeDim = Math.max(maxDim, 1);
       const fov = camera.fov * (Math.PI / 180);
-      const distance = Math.abs(safeDim / Math.sin(fov / 2)) * 0.82;
+      const distance = Math.abs(safeDim / Math.sin(fov / 2)) * (options.showcase ? 0.62 : 0.82);
       camera.near = Math.max(0.01, distance / 2000);
       camera.far = Math.max(5000, distance * 40);
-      camera.position.set(distance * 0.88, distance * 0.48, distance * 0.92);
+      if (options.showcase) {
+        camera.position.set(distance * 0.72, distance * 0.38, distance * 0.82);
+      } else {
+        camera.position.set(distance * 0.88, distance * 0.48, distance * 0.92);
+      }
       camera.updateProjectionMatrix();
       controls.target.set(0, targetY, 0);
       controls.update();
@@ -514,11 +591,12 @@ export function SMDViewer({ smdFile, smdPath, extraFiles, characterFile = null, 
 
     async function loadScene() {
       const localErrors: string[] = [];
-      const skipEquipment = options.characterPreview && isSameFile(smdFile, characterFile);
+      const effectiveCharacterPreview = options.characterPreview && !options.showcase;
+      const skipEquipment = effectiveCharacterPreview && isSameFile(smdFile, characterFile);
       let characterName = "Manequim técnico";
       let characterTexture = "Manequim";
 
-      if (options.characterPreview) {
+      if (effectiveCharacterPreview) {
         if (characterFile) {
           try {
             const character = await buildSmdModel(characterFile, extraFiles, options.textured, false, 0x9aa8ff);
@@ -565,7 +643,7 @@ export function SMDViewer({ smdFile, smdPath, extraFiles, characterFile = null, 
       }
 
       if (item && !skipEquipment) {
-        if (options.characterPreview) {
+        if (effectiveCharacterPreview) {
           const anchor = getAnchor(equipSlot);
           const autoScale = equip.autoFit ? getFitSize(equipSlot) / item.maxDim : 1;
           item.group.position.set(anchor.x + equip.offsetX, anchor.y + equip.offsetY, anchor.z + equip.offsetZ);
@@ -575,9 +653,10 @@ export function SMDViewer({ smdFile, smdPath, extraFiles, characterFile = null, 
         rootGroup.add(item.group);
       }
 
-      rotatingGroup = options.characterPreview ? rootGroup : item?.group ?? rootGroup;
+      applyPremiumModelFlags(rootGroup);
+      rotatingGroup = effectiveCharacterPreview ? rootGroup : item?.group ?? rootGroup;
 
-      if (options.characterPreview) {
+      if (effectiveCharacterPreview) {
         setCameraForSize(12.5, 4.7);
         resetViewRef.current = () => setCameraForSize(12.5, 4.7);
       } else if (item) {
@@ -599,9 +678,11 @@ export function SMDViewer({ smdFile, smdPath, extraFiles, characterFile = null, 
         objectCount: item?.objectCount ?? 0,
         bounds: item?.bounds ?? "-",
         assetCount: extraFiles.length,
-        previewLabel: options.characterPreview
-          ? skipEquipment ? `Personagem real · ${characterName}` : `${characterName} · ${SLOT_LABELS[equipSlot]}`
-          : "Modelo isolado",
+        previewLabel: options.showcase
+          ? "Showcase 3D"
+          : effectiveCharacterPreview
+            ? skipEquipment ? `Personagem real · ${characterName}` : `${characterName} · ${SLOT_LABELS[equipSlot]}`
+            : "Modelo isolado",
         characterName,
         characterTexture,
       });
@@ -615,7 +696,7 @@ export function SMDViewer({ smdFile, smdPath, extraFiles, characterFile = null, 
 
     function animate() {
       animationId = requestAnimationFrame(animate);
-      if (options.autoRotate && rotatingGroup) rotatingGroup.rotation.y += 0.012;
+      if (options.autoRotate && rotatingGroup) rotatingGroup.rotation.y += options.showcase ? 0.0065 : 0.012;
       controls.update();
       renderer.render(scene, camera);
     }
@@ -659,6 +740,42 @@ export function SMDViewer({ smdFile, smdPath, extraFiles, characterFile = null, 
     setOptions(prev => ({ ...prev, [name]: !prev[name] }));
   }
 
+  function activateShowcase() {
+    setOptions(prev => {
+      if (prev.showcase) return { ...prev, showcase: false };
+      return {
+        ...prev,
+        showcase: true,
+        characterPreview: false,
+        htmlDoll: false,
+        textured: true,
+        wireframe: false,
+        grid: false,
+        axes: false,
+        darkBackground: true,
+        autoRotate: true,
+      };
+    });
+  }
+
+  function activateCharacterPreview() {
+    setOptions(prev => ({ ...prev, characterPreview: !prev.characterPreview, showcase: false }));
+  }
+
+  function activateHtmlDoll() {
+    setOptions(prev => ({ ...prev, htmlDoll: !prev.htmlDoll, characterPreview: true, showcase: false }));
+  }
+
+  function toggleFullscreen() {
+    const element = mountRef.current?.parentElement;
+    if (!element) return;
+    if (document.fullscreenElement) {
+      document.exitFullscreen?.();
+    } else {
+      element.requestFullscreen?.();
+    }
+  }
+
   function changeSlot(nextSlot: EquipSlot) {
     setEquipSlot(nextSlot);
     setEquip(DEFAULT_EQUIP[nextSlot]);
@@ -674,7 +791,7 @@ export function SMDViewer({ smdFile, smdPath, extraFiles, characterFile = null, 
     const renderer = rendererRef.current;
     if (!renderer) return;
     const link = document.createElement("a");
-    link.download = `${smdFile.name.replace(/\.[^.]+$/, "")}_${options.characterPreview ? "character" : "preview"}.png`;
+    link.download = `${smdFile.name.replace(/\.[^.]+$/, "")}_${options.showcase ? "showcase" : options.characterPreview ? "character" : "preview"}.png`;
     link.href = renderer.domElement.toDataURL("image/png");
     link.click();
   }
@@ -695,7 +812,7 @@ export function SMDViewer({ smdFile, smdPath, extraFiles, characterFile = null, 
     : "muted";
 
   return (
-    <div className="viewer-shell">
+    <div className={`viewer-shell ${options.showcase ? "showcase-mode" : ""} ${options.htmlDoll ? "html-mode" : ""}`}>
       <div ref={mountRef} className={`canvas-host ${options.htmlDoll ? "canvas-muted" : ""}`} />
       {options.characterPreview && options.htmlDoll && (
         <HtmlPaperDoll
@@ -708,8 +825,9 @@ export function SMDViewer({ smdFile, smdPath, extraFiles, characterFile = null, 
       <div className="watermark">ALUCARD-TOOLS</div>
 
       <div className="viewer-toolbar">
-        <button type="button" className={options.characterPreview ? "active" : ""} onClick={() => toggleOption("characterPreview")}>Personagem</button>
-        <button type="button" className={options.htmlDoll ? "active" : ""} onClick={() => toggleOption("htmlDoll")}>HTML</button>
+        <button type="button" className={options.showcase ? "active showcase-button" : "showcase-button"} onClick={activateShowcase}>Showcase</button>
+        <button type="button" className={options.characterPreview ? "active" : ""} onClick={activateCharacterPreview}>Personagem</button>
+        <button type="button" className={options.htmlDoll ? "active" : ""} onClick={activateHtmlDoll}>HTML</button>
         <button type="button" className={options.textured ? "active" : ""} onClick={() => toggleOption("textured")}>Textura</button>
         <button type="button" className={options.wireframe ? "active" : ""} onClick={() => toggleOption("wireframe")}>Wireframe</button>
         <button type="button" className={options.grid ? "active" : ""} onClick={() => toggleOption("grid")}>Grid</button>
@@ -718,12 +836,13 @@ export function SMDViewer({ smdFile, smdPath, extraFiles, characterFile = null, 
         <button type="button" className={options.ptAxisFix ? "active" : ""} onClick={() => toggleOption("ptAxisFix")}>Eixo PT</button>
         <button type="button" onClick={() => toggleOption("darkBackground")}>Fundo</button>
         <button type="button" onClick={() => resetViewRef.current?.()}>Centralizar</button>
+        <button type="button" onClick={toggleFullscreen}>Tela cheia</button>
         <button type="button" className="export" onClick={exportPng}>Exportar PNG</button>
       </div>
 
-      <div className="help-pill">Mouse: girar · Scroll: zoom · Direito: mover</div>
+      <div className="help-pill">{options.showcase ? "Showcase: giro premium · zoom suave · exporte PNG" : "Mouse: girar · Scroll: zoom · Direito: mover"}</div>
 
-      {options.characterPreview && (
+      {options.characterPreview && !options.showcase && (
         <div className="equip-panel">
           <div className="equip-title">
             <strong>Preview no personagem</strong>
@@ -774,7 +893,38 @@ export function SMDViewer({ smdFile, smdPath, extraFiles, characterFile = null, 
         </div>
       )}
 
-      {(info || errors.length > 0) && (
+
+      {options.showcase && info && (
+        <div className="showcase-panel">
+          <div className="showcase-kicker">ALUCARD-TOOLS SHOWCASE</div>
+          <h2>{info.modelName}</h2>
+          <p>{info.modelPath}</p>
+          <div className="showcase-stats">
+            <span><strong>{info.triangles.toLocaleString()}</strong> triângulos</span>
+            <span><strong>{info.vertices.toLocaleString()}</strong> vértices</span>
+            <span><strong>{info.objectCount.toLocaleString()}</strong> objetos</span>
+            <span><strong>{info.bounds}</strong> bounds</span>
+          </div>
+          <div className="showcase-texture-row">
+            <span>Textura</span>
+            <strong className={textureClass}>
+              {info.textureStatus === "loaded" && info.matchedTexture}
+              {info.textureStatus === "missing" && `faltando: ${info.expectedTexture}`}
+              {info.textureStatus === "error" && "erro ao carregar"}
+              {info.textureStatus === "none" && "sem textura informada"}
+            </strong>
+          </div>
+        </div>
+      )}
+
+      {options.showcase && (
+        <div className="showcase-footer">
+          <span>Arraste para girar</span>
+          <span>Scroll para zoom</span>
+          <span>Exportar PNG para catálogo</span>
+        </div>
+      )}
+      {(info || errors.length > 0) && !options.showcase && (
         <div className="diagnostic-panel">
           {info && (
             <div className="diagnostic-grid">
