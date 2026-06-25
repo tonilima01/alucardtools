@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+﻿import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { parseSmd } from "../lib/parseSmd";
@@ -34,7 +34,7 @@ const DEFAULT_TRANSFORM: ManualTransform = { x: 0, y: 0, z: 0, rx: 0, ry: 0, rz:
 function boundsText(box: THREE.Box3): string {
   const s = new THREE.Vector3();
   box.getSize(s);
-  return `${s.x.toFixed(1)} × ${s.y.toFixed(1)} × ${s.z.toFixed(1)}`;
+  return `${s.x.toFixed(1)} Ã— ${s.y.toFixed(1)} Ã— ${s.z.toFixed(1)}`;
 }
 
 function pickBestTexture(item: ItemPackage, textureNames: string[]): File | null {
@@ -295,7 +295,7 @@ export function SMDViewer({ item }: Props) {
     return () => { cancelled = true; };
   }, [item, textureEnabled]);
 
-  function fitCameraToObject(object: THREE.Object3D) {
+  function fitCameraToObject(object: any) {
     const camera = cameraRef.current;
     const controls = controlsRef.current;
     if (!camera || !controls) return;
@@ -348,7 +348,7 @@ export function SMDViewer({ item }: Props) {
         <div className="empty-viewer">
           <div className="viewer-orb">3D</div>
           <h2>Abra a pasta tmABCD ou um pacote de item</h2>
-          <p>O sistema vai montar pacotes usando o SMD principal e até 4 texturas relacionadas.</p>
+          <p>O sistema vai montar pacotes usando o SMD principal e atÃ© 4 texturas relacionadas.</p>
         </div>
       )}
 
@@ -360,8 +360,8 @@ export function SMDViewer({ item }: Props) {
           <h2>{item.displayName}</h2>
           <p>{item.smd.path}</p>
           <div className="showcase-stats">
-            <div><b>{stats.triangles.toLocaleString("pt-BR")}</b><span>triângulos</span></div>
-            <div><b>{stats.vertices.toLocaleString("pt-BR")}</b><span>vértices</span></div>
+            <div><b>{stats.triangles.toLocaleString("pt-BR")}</b><span>triÃ¢ngulos</span></div>
+            <div><b>{stats.vertices.toLocaleString("pt-BR")}</b><span>vÃ©rtices</span></div>
             <div><b>{stats.objects}</b><span>objetos</span></div>
             <div><b>{stats.bounds}</b><span>bounds</span></div>
           </div>
@@ -382,7 +382,7 @@ export function SMDViewer({ item }: Props) {
         </div>
       )}
 
-      <div className="hint-row"><span>Arraste para girar câmera</span><span>Scroll para zoom</span><span>Objeto inicia parado</span></div>
+      <div className="hint-row"><span>Arraste para girar cÃ¢mera</span><span>Scroll para zoom</span><span>Objeto inicia parado</span></div>
     </div>
   );
 }
@@ -396,3 +396,4 @@ function Control({ label, value, min, max, step, onChange }: { label: string; va
     </label>
   );
 }
+
