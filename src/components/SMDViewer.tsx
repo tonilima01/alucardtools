@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { parseSmd } from "../lib/parseSmd";
@@ -31,7 +31,7 @@ interface ManualTransform {
 
 const DEFAULT_TRANSFORM: ManualTransform = { x: 0, y: 0, z: 0, rx: 0, ry: 0, rz: 0, scale: 1 };
 
-function boundsText(box: THREE.Box3): string {
+function boundsText(box: any): string {
   const s = new THREE.Vector3();
   box.getSize(s);
   return `${s.x.toFixed(1)} Ã— ${s.y.toFixed(1)} Ã— ${s.z.toFixed(1)}`;
@@ -48,7 +48,7 @@ function pickBestTexture(item: ItemPackage, textureNames: string[]): File | null
   return item.textures[0].file.file;
 }
 
-function setGroupTransform(group: THREE.Group, transform: ManualTransform, eixoPT: boolean): void {
+function setGroupTransform(group: any, transform: ManualTransform, eixoPT: boolean): void {
   group.position.set(transform.x, transform.y, transform.z);
   group.rotation.set(
     THREE.MathUtils.degToRad(transform.rx + (eixoPT ? -90 : 0)),
@@ -60,11 +60,11 @@ function setGroupTransform(group: THREE.Group, transform: ManualTransform, eixoP
 
 export function SMDViewer({ item }: Props) {
   const mountRef = useRef<HTMLDivElement | null>(null);
-  const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
-  const sceneRef = useRef<THREE.Scene | null>(null);
-  const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
-  const controlsRef = useRef<OrbitControls | null>(null);
-  const modelGroupRef = useRef<THREE.Group | null>(null);
+  const rendererRef = useRef<any | null>(null);
+  const sceneRef = useRef<any | null>(null);
+  const cameraRef = useRef<any | null>(null);
+  const controlsRef = useRef<any>(null);
+  const modelGroupRef = useRef<any | null>(null);
   const frameRef = useRef<number | null>(null);
 
   const [textureEnabled, setTextureEnabled] = useState(true);
@@ -86,16 +86,16 @@ export function SMDViewer({ item }: Props) {
     const mount = mountRef.current;
     if (!mount) return;
 
-    const scene = new THREE.Scene();
+    const scene = new (THREE as any).Scene();
     scene.background = null;
     scene.fog = new THREE.Fog(0x050816, 80, 180);
     sceneRef.current = scene;
 
-    const camera = new THREE.PerspectiveCamera(38, 1, 0.1, 5000);
+    const camera = new (THREE as any).PerspectiveCamera(38, 1, 0.1, 5000);
     camera.position.set(0, 10, 34);
     cameraRef.current = camera;
 
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
+    const renderer = new (THREE as any).WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     renderer.shadowMap.enabled = true;
@@ -185,9 +185,9 @@ export function SMDViewer({ item }: Props) {
   useEffect(() => {
     const group = modelGroupRef.current;
     if (!group) return;
-    group.traverse(obj => {
+    group.traverse((obj: any) => {
       if (obj instanceof THREE.Mesh) {
-        const material = obj.material as THREE.MeshStandardMaterial;
+        const material = obj.material as any;
         material.wireframe = wireframe;
         material.needsUpdate = true;
       }
@@ -209,10 +209,10 @@ export function SMDViewer({ item }: Props) {
 
       if (modelGroupRef.current) {
         scene.remove(modelGroupRef.current);
-        modelGroupRef.current.traverse(obj => {
+        modelGroupRef.current.traverse((obj: any) => {
           if (obj instanceof THREE.Mesh) {
             obj.geometry.dispose();
-            if (Array.isArray(obj.material)) obj.material.forEach(m => m.dispose());
+            if (Array.isArray(obj.material)) obj.material.forEach((m: any) => m.dispose());
             else obj.material.dispose();
           }
         });
@@ -237,13 +237,13 @@ export function SMDViewer({ item }: Props) {
 
         setLoadingText("Procurando textura do pacote");
         setLoadingProgress(58);
-        let texture: THREE.Texture | null = null;
+        let texture: any | null = null;
         const bestTexture = pickBestTexture(item, mesh.textureNames);
         if (bestTexture && textureEnabled) {
           setLoadingText(`Carregando textura ${bestTexture.name}`);
           setLoadingProgress(74);
           try {
-            texture = await textureFromFile(bestTexture) as THREE.Texture;
+            texture = await textureFromFile(bestTexture) as any;
             texture.colorSpace = THREE.SRGBColorSpace;
             texture.anisotropy = 8;
             texture.needsUpdate = true;
@@ -255,7 +255,7 @@ export function SMDViewer({ item }: Props) {
 
         setLoadingText("Aplicando material");
         setLoadingProgress(88);
-        const material = new THREE.MeshStandardMaterial({
+        const material = new (THREE as any).MeshStandardMaterial({
           color: texture ? 0xffffff : 0xaebcff,
           map: texture || null,
           roughness: 0.58,
@@ -268,14 +268,14 @@ export function SMDViewer({ item }: Props) {
         renderMesh.castShadow = true;
         renderMesh.receiveShadow = true;
 
-        const group = new THREE.Group();
+        const group = new (THREE as any).Group();
         group.add(renderMesh);
         setGroupTransform(group, DEFAULT_TRANSFORM, eixoPT);
         scene.add(group);
         modelGroupRef.current = group;
 
         fitCameraToObject(group);
-        const box = new THREE.Box3().setFromObject(group);
+        const box = new (THREE as any).Box3().setFromObject(group);
         setStats({
           triangles: mesh.indices.length / 3,
           vertices: mesh.positions.length / 3,
@@ -299,7 +299,7 @@ export function SMDViewer({ item }: Props) {
     const camera = cameraRef.current;
     const controls = controlsRef.current;
     if (!camera || !controls) return;
-    const box = new THREE.Box3().setFromObject(object);
+    const box = new (THREE as any).Box3().setFromObject(object);
     const size = new THREE.Vector3();
     const center = new THREE.Vector3();
     box.getSize(size);
@@ -396,4 +396,7 @@ function Control({ label, value, min, max, step, onChange }: { label: string; va
     </label>
   );
 }
+
+
+
 
