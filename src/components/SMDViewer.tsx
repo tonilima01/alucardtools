@@ -703,6 +703,12 @@ export function SMDViewer({ smdFile, smdPath, extraFiles, characterFile = null, 
               {info.textureStatus === "none" && "sem textura informada"}
             </strong>
           </div>
+          {info.textureStatus === "missing" && (
+            <div className="texture-fix-card">
+              <strong>Textura não importada</strong>
+              <span>Abra a pasta completa do cliente ou selecione também o arquivo <b>{info.expectedTexture}</b>.</span>
+            </div>
+          )}
         </div>
       )}
 
