@@ -29,6 +29,13 @@ interface ModelProfile {
   note: string;
 }
 
+interface ImportState {
+  active: boolean;
+  progress: number;
+  title: string;
+  detail: string;
+}
+
 const FILTERS: Array<{ id: CategoryFilter; label: string }> = [
   { id: "all", label: "Todos" },
   { id: "showcase", label: "Showcase OK" },
@@ -161,6 +168,12 @@ export default function App() {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<CategoryFilter>("all");
   const [dragging, setDragging] = useState(false);
+  const [importState, setImportState] = useState<ImportState>({
+    active: false,
+    progress: 0,
+    title: "Indexando biblioteca",
+    detail: "",
+  });
 
   const selectedModel = smdFiles.find(entry => entry.id === selectedId) ?? smdFiles[0] ?? null;
   const selectedProfile = selectedModel ? getProfile(selectedModel) : null;
@@ -187,8 +200,32 @@ export default function App() {
     return exact ?? partial ?? null;
   }, [selectedModel, textureFiles]);
 
-  function processFiles(files: FileList | File[]) {
-    const entries = Array.from(files).map(toEntry);
+  async function processFiles(files: FileList | File[]) {
+    const fileArray = Array.from(files);
+    if (fileArray.length === 0) return;
+
+    setImportState({
+      active: true,
+      progress: 3,
+      title: "Indexando biblioteca PristonTale",
+      detail: "Lendo arquivos locais. Nada é enviado ao servidor.",
+    });
+
+    const entries: FileEntry[] = [];
+    const chunkSize = 450;
+    for (let index = 0; index < fileArray.length; index += chunkSize) {
+      const chunk = fileArray.slice(index, index + chunkSize);
+      entries.push(...chunk.map(toEntry));
+      const progress = Math.min(92, Math.round(((index + chunk.length) / fileArray.length) * 86) + 6);
+      setImportState({
+        active: true,
+        progress,
+        title: "Indexando biblioteca PristonTale",
+        detail: `${Math.min(index + chunk.length, fileArray.length).toLocaleString()} de ${fileArray.length.toLocaleString()} arquivos analisados`,
+      });
+      await new Promise(resolve => window.setTimeout(resolve, 0));
+    }
+
     const smds = entries.filter(entry => entry.ext === "smd");
     const assets = entries.filter(entry => entry.ext !== "smd");
 
@@ -200,6 +237,14 @@ export default function App() {
     if (assets.length > 0) {
       setAssetFiles(prev => mergeEntries(prev, assets));
     }
+
+    setImportState({
+      active: true,
+      progress: 100,
+      title: "Biblioteca carregada",
+      detail: `${smds.length.toLocaleString()} modelos e ${assets.length.toLocaleString()} assets encontrados`,
+    });
+    window.setTimeout(() => setImportState(prev => ({ ...prev, active: false })), 520);
   }
 
   function clearLibrary() {
@@ -246,7 +291,7 @@ export default function App() {
               webkitdirectory=""
               multiple
               onChange={event => {
-                if (event.target.files) processFiles(event.target.files);
+                if (event.target.files) void processFiles(event.target.files);
                 event.currentTarget.value = "";
               }}
             />
@@ -258,7 +303,7 @@ export default function App() {
               accept=".smd,.bmp,.tga,.dds,.png,.jpg,.jpeg,.SMD,.BMP,.TGA,.DDS,.PNG,.JPG,.JPEG"
               multiple
               onChange={event => {
-                if (event.target.files) processFiles(event.target.files);
+                if (event.target.files) void processFiles(event.target.files);
                 event.currentTarget.value = "";
               }}
             />
@@ -278,7 +323,7 @@ export default function App() {
         onDrop={event => {
           event.preventDefault();
           setDragging(false);
-          processFiles(event.dataTransfer.files);
+          void processFiles(event.dataTransfer.files);
         }}
       >
         <aside className="studio-left">
@@ -375,7 +420,7 @@ export default function App() {
                     webkitdirectory=""
                     multiple
                     onChange={event => {
-                      if (event.target.files) processFiles(event.target.files);
+                      if (event.target.files) void processFiles(event.target.files);
                       event.currentTarget.value = "";
                     }}
                   />
@@ -387,7 +432,7 @@ export default function App() {
                     accept=".smd,.bmp,.tga,.dds,.png,.jpg,.jpeg"
                     multiple
                     onChange={event => {
-                      if (event.target.files) processFiles(event.target.files);
+                      if (event.target.files) void processFiles(event.target.files);
                       event.currentTarget.value = "";
                     }}
                   />
@@ -454,6 +499,18 @@ export default function App() {
             </div>
           </section>
         </aside>
+
+        {importState.active && (
+          <div className="app-loading-overlay" aria-live="polite">
+            <div className="app-loading-card">
+              <div className="app-loading-icon">AT</div>
+              <h3>{importState.title}</h3>
+              <p>{importState.detail}</p>
+              <div className="app-loading-bar"><span style={{ width: `${importState.progress}%` }} /></div>
+              <small>{Math.round(importState.progress)}%</small>
+            </div>
+          </div>
+        )}
       </main>
     </div>
   );

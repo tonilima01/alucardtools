@@ -253,10 +253,14 @@ function buildPresetJson(smdFile: File, equipSlot: EquipSlot, equip: EquipTransf
   }, null, 2);
 }
 
-async function buildSmdModel(file: File, extraFiles: File[], textured: boolean, wireframe: boolean, fallbackColor: number): Promise<BuiltSmdModel> {
+async function buildSmdModel(file: File, extraFiles: File[], textured: boolean, wireframe: boolean, fallbackColor: number, onProgress?: (progress: number, detail: string) => void): Promise<BuiltSmdModel> {
   const errors: string[] = [];
-  const meshData = parseSmd(await file.arrayBuffer());
+  onProgress?.(12, "Lendo arquivo SMD");
+  const buffer = await file.arrayBuffer();
+  onProgress?.(28, "Interpretando malha");
+  const meshData = parseSmd(buffer);
 
+  onProgress?.(44, "Montando geometria 3D");
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute("position", new THREE.BufferAttribute(meshData.positions, 3));
   geometry.setAttribute("uv", new THREE.BufferAttribute(meshData.uvs, 2));
@@ -266,12 +270,14 @@ async function buildSmdModel(file: File, extraFiles: File[], textured: boolean, 
 
   const textureNames = uniqueStrings([meshData.textureName, ...meshData.textureNames]);
   const expectedTexture = textureNames[0] ?? "";
+  onProgress?.(58, "Localizando texturas");
   const matchedTexture = findTextureFile(textureNames, file, extraFiles);
   let textureStatus: ViewerInfo["textureStatus"] = textureNames.length > 0 ? "missing" : "none";
   let textureMap: any = null;
 
   if (matchedTexture) {
     try {
+      onProgress?.(72, `Carregando textura ${matchedTexture.name}`);
       textureMap = await textureFromFile(matchedTexture);
       textureMap.flipY = false;
       textureMap.colorSpace = THREE.SRGBColorSpace;
@@ -285,6 +291,7 @@ async function buildSmdModel(file: File, extraFiles: File[], textured: boolean, 
     errors.push(`Textura não encontrada: ${textureNames.slice(0, 4).join(" | ")}`);
   }
 
+  onProgress?.(86, "Aplicando material e luz");
   const material = new THREE.MeshStandardMaterial({
     color: textured && textureMap ? 0xffffff : fallbackColor,
     map: textured ? textureMap : null,
@@ -350,6 +357,13 @@ export function SMDViewer({ smdFile, smdPath, extraFiles, characterFile = null, 
     showcase: true,
   });
 
+  const [loading, setLoading] = useState({
+    active: true,
+    progress: 8,
+    title: "Loading 3D model",
+    detail: smdFile.name,
+  });
+
   useEffect(() => {
     const nextSlot = guessSlotFromName(smdFile.name);
     setEquipSlot(nextSlot);
@@ -364,6 +378,7 @@ export function SMDViewer({ smdFile, smdPath, extraFiles, characterFile = null, 
 
     setErrors([]);
     setInfo(null);
+    setLoading({ active: true, progress: 6, title: "Loading 3D model", detail: smdFile.name });
     resetViewRef.current = null;
 
     const scene = new THREE.Scene();
@@ -427,7 +442,21 @@ export function SMDViewer({ smdFile, smdPath, extraFiles, characterFile = null, 
 
     let disposed = false;
     let animationId = 0;
+    let loadingTimer = 0;
     let rotatingGroup: any = null;
+
+    function updateLoading(progress: number, detail: string) {
+      if (disposed) return;
+      setLoading({ active: true, progress: Math.max(3, Math.min(96, progress)), title: "Loading 3D model", detail });
+    }
+
+    function finishLoading(detail = "Pronto") {
+      if (disposed) return;
+      setLoading({ active: true, progress: 100, title: "Loading 3D model", detail });
+      loadingTimer = window.setTimeout(() => {
+        if (!disposed) setLoading(prev => ({ ...prev, active: false }));
+      }, 260);
+    }
 
     function setCameraForSize(maxDim: number, targetY: number) {
       const safeDim = Math.max(maxDim, 1);
@@ -455,7 +484,7 @@ export function SMDViewer({ smdFile, smdPath, extraFiles, characterFile = null, 
       if (effectiveCharacterPreview) {
         if (characterFile) {
           try {
-            const character = await buildSmdModel(characterFile, extraFiles, options.textured, false, 0x9aa8ff);
+            const character = await buildSmdModel(characterFile, extraFiles, options.textured, false, 0x9aa8ff, updateLoading);
             if (disposed) return;
             character.group.name = `Personagem real: ${characterFile.name}`;
             character.group.scale.setScalar(REAL_CHARACTER_HEIGHT / Math.max(character.size.y, 1));
@@ -476,14 +505,14 @@ export function SMDViewer({ smdFile, smdPath, extraFiles, characterFile = null, 
       let item: BuiltSmdModel | null = null;
       if (!skipEquipment) {
         try {
-          item = await buildSmdModel(smdFile, extraFiles, options.textured, options.wireframe, 0xaab6ff);
+          item = await buildSmdModel(smdFile, extraFiles, options.textured, options.wireframe, 0xaab6ff, updateLoading);
         } catch (error) {
           setErrors(prev => [...prev, ...localErrors, `Erro ao ler SMD: ${(error as Error).message}`]);
           return;
         }
       } else {
         try {
-          item = await buildSmdModel(smdFile, extraFiles, options.textured, options.wireframe, 0xaab6ff);
+          item = await buildSmdModel(smdFile, extraFiles, options.textured, options.wireframe, 0xaab6ff, updateLoading);
         } catch {
           item = null;
         }
@@ -541,10 +570,12 @@ export function SMDViewer({ smdFile, smdPath, extraFiles, characterFile = null, 
       });
 
       setErrors([...localErrors, ...(item?.errors ?? [])]);
+      finishLoading(item?.textureStatus === "loaded" ? "Modelo e textura carregados" : "Modelo carregado");
     }
 
     loadScene().catch(error => {
       setErrors(prev => [...prev, `Erro inesperado: ${(error as Error).message}`]);
+      setLoading({ active: false, progress: 0, title: "Loading 3D model", detail: "Falha ao carregar" });
     });
 
     function animate() {
@@ -566,6 +597,7 @@ export function SMDViewer({ smdFile, smdPath, extraFiles, characterFile = null, 
 
     return () => {
       disposed = true;
+      if (loadingTimer) window.clearTimeout(loadingTimer);
       cancelAnimationFrame(animationId);
       window.removeEventListener("resize", onResize);
       controls.dispose();
@@ -662,6 +694,16 @@ export function SMDViewer({ smdFile, smdPath, extraFiles, characterFile = null, 
   return (
     <div className={`viewer-shell ${options.showcase ? "showcase-mode" : ""}`}>
       <div ref={mountRef} className="canvas-host" />
+      {loading.active && (
+        <div className="model-loading-overlay" aria-live="polite">
+          <div className="model-loading-card">
+            <div className="model-loading-title">{loading.title}</div>
+            <div className="model-loading-detail">{loading.detail}</div>
+            <div className="model-loading-bar"><span style={{ width: `${loading.progress}%` }} /></div>
+            <div className="model-loading-percent">{Math.round(loading.progress)}%</div>
+          </div>
+        </div>
+      )}
       <div className="watermark">ALUCARD-TOOLS</div>
 
       <div className="viewer-toolbar">
