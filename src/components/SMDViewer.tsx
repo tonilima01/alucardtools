@@ -21,7 +21,6 @@ interface ViewOptions {
   darkBackground: boolean;
   characterPreview: boolean;
   ptAxisFix: boolean;
-  htmlDoll: boolean;
   showcase: boolean;
 }
 
@@ -90,7 +89,6 @@ const SLOT_LABELS: Record<EquipSlot, string> = {
   back: "Costas / visual",
 };
 
-const CLASS_LABELS: CharacterClass[] = ["Knight", "Fighter", "Pikeman", "Archer", "Atalanta", "Mechanician", "Magician", "Priestess"];
 const REAL_CHARACTER_HEIGHT = 8.6;
 
 function readableSize(bytes: number): string {
@@ -189,29 +187,6 @@ function getFitSize(slot: EquipSlot): number {
   }
 }
 
-function classTint(characterClass: CharacterClass): number {
-  switch (characterClass) {
-    case "Knight": return 0x8ea4ff;
-    case "Fighter": return 0xff8d63;
-    case "Pikeman": return 0xa89bff;
-    case "Archer": return 0x80e5a0;
-    case "Atalanta": return 0xffc56c;
-    case "Mechanician": return 0x9cc7d8;
-    case "Magician": return 0x96b3ff;
-    case "Priestess": return 0xffacd7;
-  }
-}
-
-function makeMaterial(color: number, opacity = 1, metalness = 0.06) {
-  return new THREE.MeshStandardMaterial({
-    color,
-    roughness: 0.72,
-    metalness,
-    transparent: opacity < 1,
-    opacity,
-  });
-}
-
 function applyPremiumModelFlags(group: any) {
   group.traverse((obj: any) => {
     if (obj?.isMesh) {
@@ -263,63 +238,11 @@ function createShowcaseFloor() {
   return group;
 }
 
-function createMannequin(characterClass: CharacterClass) {
-  const group = new THREE.Group();
-  group.name = "ALUCARD-TOOLS Technical Mannequin";
-
-  const tint = classTint(characterClass);
-  const bodyMat = makeMaterial(tint, 0.48, 0.02);
-  const jointMat = makeMaterial(0xe8edff, 0.62, 0.04);
-  const darkMat = makeMaterial(0x192032, 0.72, 0.02);
-
-  const addBox = (name: string, size: [number, number, number], pos: [number, number, number], mat: any) => {
-    const mesh = new THREE.Mesh(new THREE.BoxGeometry(size[0], size[1], size[2]), mat);
-    mesh.name = name;
-    mesh.position.set(pos[0], pos[1], pos[2]);
-    group.add(mesh);
-  };
-
-  const addSphere = (name: string, radius: number, pos: [number, number, number], mat: any) => {
-    const mesh = new THREE.Mesh(new THREE.SphereGeometry(radius, 24, 16), mat);
-    mesh.name = name;
-    mesh.position.set(pos[0], pos[1], pos[2]);
-    group.add(mesh);
-  };
-
-  addBox("torso", [2.2, 3.15, 1.05], [0, 5.35, 0], bodyMat);
-  addBox("waist", [1.75, 0.8, 0.9], [0, 3.55, 0], darkMat);
-  addSphere("head", 0.78, [0, 7.55, 0], jointMat);
-  addBox("neck", [0.55, 0.38, 0.55], [0, 6.7, 0], darkMat);
-
-  addBox("rightUpperArm", [0.55, 2.15, 0.55], [-1.65, 5.45, 0], bodyMat);
-  addBox("rightForearm", [0.48, 1.95, 0.48], [-2.32, 4.25, 0.12], jointMat);
-  addSphere("rightHandAnchor", 0.35, [-2.35, 3.2, 0.18], darkMat);
-
-  addBox("leftUpperArm", [0.55, 2.15, 0.55], [1.65, 5.45, 0], bodyMat);
-  addBox("leftForearm", [0.48, 1.95, 0.48], [2.32, 4.25, 0.12], jointMat);
-  addSphere("leftHandAnchor", 0.35, [2.35, 3.2, 0.18], darkMat);
-
-  addBox("rightLeg", [0.68, 3.1, 0.68], [-0.55, 1.65, 0], bodyMat);
-  addBox("leftLeg", [0.68, 3.1, 0.68], [0.55, 1.65, 0], bodyMat);
-  addBox("rightFoot", [0.88, 0.35, 1.35], [-0.55, 0.05, 0.25], darkMat);
-  addBox("leftFoot", [0.88, 0.35, 1.35], [0.55, 0.05, 0.25], darkMat);
-
-  const ring = new THREE.Mesh(
-    new THREE.TorusGeometry(2.95, 0.035, 8, 96),
-    makeMaterial(0x6e7dff, 0.42, 0.2),
-  );
-  ring.rotation.x = Math.PI / 2;
-  ring.position.y = 0.04;
-  group.add(ring);
-
-  return group;
-}
-
 function buildPresetJson(smdFile: File, equipSlot: EquipSlot, equip: EquipTransform, characterClass: CharacterClass, characterFile?: File | null): string {
   return JSON.stringify({
     tool: "ALUCARD-TOOLS",
     model: smdFile.name,
-    realCharacter: characterFile?.name ?? "technical-mannequin",
+    realCharacter: characterFile?.name ?? "none",
     characterClass,
     slot: equipSlot,
     anchor: SLOT_LABELS[equipSlot],
@@ -418,59 +341,6 @@ function guessCharacterClassFromName(fileName: string, fallback: CharacterClass)
   return fallback;
 }
 
-function HtmlPaperDoll({
-  characterFile,
-  selectedFile,
-  slot,
-  characterClass,
-}: {
-  characterFile?: File | null;
-  selectedFile: File;
-  slot: EquipSlot;
-  characterClass: CharacterClass;
-}) {
-  const displayClass = guessCharacterClassFromName(characterFile?.name ?? selectedFile.name, characterClass);
-  const isSame = isSameFile(characterFile, selectedFile);
-  const modelLabel = isSame ? "base do personagem" : selectedFile.name;
-
-  return (
-    <div className={`html-doll html-doll-${displayClass.toLowerCase()}`}>
-      <div className="html-doll-stage">
-        <div className="html-doll-aura" />
-        <div className="html-doll-character">
-          <div className="doll-shadow" />
-          <div className="doll-backpack" data-active={slot === "back" && !isSame} />
-          <div className="doll-head">
-            <span className="doll-face" />
-            <span className="doll-helmet" data-active={slot === "helmet" && !isSame}>{slot === "helmet" && !isSame ? "SMD" : ""}</span>
-          </div>
-          <div className="doll-neck" />
-          <div className="doll-arm doll-arm-left"><span /></div>
-          <div className="doll-arm doll-arm-right"><span /></div>
-          <div className="doll-weapon" data-active={slot === "weapon" && !isSame}><span /></div>
-          <div className="doll-shield" data-active={slot === "shield" && !isSame}><span /></div>
-          <div className="doll-body">
-            <div className="doll-chest" data-active={(slot === "armor" || isSame) ? "true" : "false"}>
-              {(slot === "armor" || isSame) && <span>{isSame ? "BASE" : "ARMOR"}</span>}
-            </div>
-            <div className="doll-waist" />
-          </div>
-          <div className="doll-leg doll-leg-left"><span /></div>
-          <div className="doll-leg doll-leg-right"><span /></div>
-        </div>
-      </div>
-
-      <div className="html-doll-card">
-        <strong>Personagem montado · HTML</strong>
-        <span>Classe: {displayClass}</span>
-        <span>Base: {characterFile?.name ?? "manequim técnico"}</span>
-        <span>Equipado: {modelLabel}</span>
-        <small>Este modo é uma prévia visual montada por camadas HTML/CSS. Ele serve para catálogo/loja enquanto o parser 3D real do personagem é evoluído.</small>
-      </div>
-    </div>
-  );
-}
-
 export function SMDViewer({ smdFile, smdPath, extraFiles, characterFile = null, characterPath = "" }: Props) {
   const mountRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<any>(null);
@@ -478,7 +348,7 @@ export function SMDViewer({ smdFile, smdPath, extraFiles, characterFile = null, 
   const [info, setInfo] = useState<ViewerInfo | null>(null);
   const [errors, setErrors] = useState<string[]>([]);
   const [copiedPreset, setCopiedPreset] = useState(false);
-  const [characterClass, setCharacterClass] = useState<CharacterClass>("Knight");
+  const [characterClass] = useState<CharacterClass>("Knight");
   const [equipSlot, setEquipSlot] = useState<EquipSlot>("weapon");
   const [equip, setEquip] = useState<EquipTransform>(DEFAULT_EQUIP.weapon);
   const [options, setOptions] = useState<ViewOptions>({
@@ -488,10 +358,9 @@ export function SMDViewer({ smdFile, smdPath, extraFiles, characterFile = null, 
     axes: true,
     autoRotate: false,
     darkBackground: true,
-    characterPreview: true,
+    characterPreview: false,
     ptAxisFix: false,
-    htmlDoll: false,
-    showcase: false,
+    showcase: true,
   });
 
   useEffect(() => {
@@ -593,8 +462,8 @@ export function SMDViewer({ smdFile, smdPath, extraFiles, characterFile = null, 
       const localErrors: string[] = [];
       const effectiveCharacterPreview = options.characterPreview && !options.showcase;
       const skipEquipment = effectiveCharacterPreview && isSameFile(smdFile, characterFile);
-      let characterName = "Manequim técnico";
-      let characterTexture = "Manequim";
+      let characterName = characterFile ? characterFile.name : "Sem personagem real";
+      let characterTexture = characterFile ? "aguardando leitura" : "Sem base real";
 
       if (effectiveCharacterPreview) {
         if (characterFile) {
@@ -611,12 +480,9 @@ export function SMDViewer({ smdFile, smdPath, extraFiles, characterFile = null, 
             localErrors.push(...character.errors.map(error => `Personagem: ${error}`));
           } catch (error) {
             localErrors.push(`Erro ao ler personagem real ${characterFile.name}: ${(error as Error).message}`);
-            rootGroup.add(createMannequin(characterClass));
-            characterName = "Manequim técnico";
-            characterTexture = "Falha no personagem real";
+            characterName = "Falha ao ler personagem real";
+            characterTexture = "Sem fallback artificial";
           }
-        } else {
-          rootGroup.add(createMannequin(characterClass));
         }
       }
 
@@ -747,7 +613,6 @@ export function SMDViewer({ smdFile, smdPath, extraFiles, characterFile = null, 
         ...prev,
         showcase: true,
         characterPreview: false,
-        htmlDoll: false,
         textured: true,
         wireframe: false,
         grid: false,
@@ -760,10 +625,6 @@ export function SMDViewer({ smdFile, smdPath, extraFiles, characterFile = null, 
 
   function activateCharacterPreview() {
     setOptions(prev => ({ ...prev, characterPreview: !prev.characterPreview, showcase: false }));
-  }
-
-  function activateHtmlDoll() {
-    setOptions(prev => ({ ...prev, htmlDoll: !prev.htmlDoll, characterPreview: true, showcase: false }));
   }
 
   function toggleFullscreen() {
@@ -812,22 +673,13 @@ export function SMDViewer({ smdFile, smdPath, extraFiles, characterFile = null, 
     : "muted";
 
   return (
-    <div className={`viewer-shell ${options.showcase ? "showcase-mode" : ""} ${options.htmlDoll ? "html-mode" : ""}`}>
-      <div ref={mountRef} className={`canvas-host ${options.htmlDoll ? "canvas-muted" : ""}`} />
-      {options.characterPreview && options.htmlDoll && (
-        <HtmlPaperDoll
-          characterFile={characterFile}
-          selectedFile={smdFile}
-          slot={equipSlot}
-          characterClass={characterClass}
-        />
-      )}
+    <div className={`viewer-shell ${options.showcase ? "showcase-mode" : ""}`}>
+      <div ref={mountRef} className="canvas-host" />
       <div className="watermark">ALUCARD-TOOLS</div>
 
       <div className="viewer-toolbar">
         <button type="button" className={options.showcase ? "active showcase-button" : "showcase-button"} onClick={activateShowcase}>Showcase</button>
         <button type="button" className={options.characterPreview ? "active" : ""} onClick={activateCharacterPreview}>Personagem</button>
-        <button type="button" className={options.htmlDoll ? "active" : ""} onClick={activateHtmlDoll}>HTML</button>
         <button type="button" className={options.textured ? "active" : ""} onClick={() => toggleOption("textured")}>Textura</button>
         <button type="button" className={options.wireframe ? "active" : ""} onClick={() => toggleOption("wireframe")}>Wireframe</button>
         <button type="button" className={options.grid ? "active" : ""} onClick={() => toggleOption("grid")}>Grid</button>
@@ -846,22 +698,17 @@ export function SMDViewer({ smdFile, smdPath, extraFiles, characterFile = null, 
         <div className="equip-panel">
           <div className="equip-title">
             <strong>Preview no personagem</strong>
-            <span>{info?.characterName ?? (characterFile ? characterFile.name : "Manequim técnico")}</span>
+            <span>{info?.characterName ?? (characterFile ? characterFile.name : "Sem personagem real")}</span>
           </div>
 
           <div className="real-character-status">
             <span>Base</span>
-            <strong>{characterFile ? "SMD real" : "Manequim técnico"}</strong>
+            <strong>{characterFile ? "SMD real" : "Sem base real"}</strong>
             {characterFile && <small>{characterPath || characterFile.name}</small>}
           </div>
 
           {!characterFile && (
-            <label>
-              Classe base
-              <select value={characterClass} onChange={event => setCharacterClass(event.target.value as CharacterClass)}>
-                {CLASS_LABELS.map(label => <option key={label} value={label}>{label}</option>)}
-              </select>
-            </label>
+            <div className="real-character-warning">Selecione um SMD real em “Personagem real” para usar este modo. Não há manequim artificial.</div>
           )}
 
           <label>

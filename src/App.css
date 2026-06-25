@@ -1098,3 +1098,16 @@ input[type="file"] { display: none; }
   background: linear-gradient(135deg, rgba(255, 143, 61, 0.20), rgba(82, 103, 255, 0.14));
   border-color: rgba(255, 177, 110, 0.38);
 }
+
+
+/* Patch: remove visual amador do manequim/HTML antigo */
+.html-doll, .html-doll-stage, .html-doll-card { display: none !important; }
+.real-character-warning {
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 196, 87, 0.28);
+  border-radius: 10px;
+  background: rgba(255, 196, 87, 0.08);
+  color: #ffdda1;
+  font-size: 12px;
+  line-height: 1.4;
+}

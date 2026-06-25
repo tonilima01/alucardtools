@@ -71,7 +71,7 @@ function getModelProfile(entry: FileEntry): ModelProfile {
       badge: "Base",
       className: "profile-character",
       showcaseReady: false,
-      recommendation: "Use no modo Personagem/HTML. Para Showcase puro, prefira arma, escudo, asa, máscara ou item isolado.",
+      recommendation: "Use no modo Personagem real. Para Showcase puro, prefira arma, escudo, asa, máscara ou item isolado.",
     };
   }
 
@@ -93,7 +93,7 @@ function getModelProfile(entry: FileEntry): ModelProfile {
       badge: "Montagem",
       className: "profile-part",
       showcaseReady: false,
-      recommendation: "Pode aparecer amassado no 3D bruto. Use como parte do personagem ou teste no modo HTML/Personagem.",
+      recommendation: "Pode aparecer amassado no 3D bruto. Use como parte do personagem real ou evite no Showcase.",
     };
   }
 
@@ -473,7 +473,7 @@ export default function App() {
           <section className="panel character-panel">
             <div className="panel-title-row">
               <h2>Personagem real</h2>
-              <span>{characterModel ? "ativo" : "manequim"}</span>
+              <span>{characterModel ? "ativo" : "sem base"}</span>
             </div>
             <div className="character-picker">
               <select
@@ -481,7 +481,7 @@ export default function App() {
                 onChange={event => setCharacterId(event.target.value)}
                 disabled={smdFiles.length === 0}
               >
-                <option value="">Usar manequim técnico</option>
+                <option value="">Sem personagem real</option>
                 {characterOptions.map(entry => (
                   <option key={entry.id} value={entry.id}>{entry.name}</option>
                 ))}
@@ -489,11 +489,11 @@ export default function App() {
               <div className="character-hint">
                 {characterModel
                   ? <>Selecionado: <strong>{characterModel.name}</strong></>
-                  : "Carregue uma classe Vercel ou abra sua pasta tmABCD."}
+                  : "Selecione um SMD base real da classe carregada."}
               </div>
               <div className="character-actions">
                 <button type="button" onClick={() => setCharacterId(pickDefaultCharacter(smdFiles)?.id ?? "")} disabled={smdFiles.length === 0}>Auto</button>
-                <button type="button" onClick={() => setCharacterId("")} disabled={!characterId}>Manequim</button>
+                <button type="button" onClick={() => setCharacterId("")} disabled={!characterId}>Limpar base</button>
               </div>
             </div>
           </section>
