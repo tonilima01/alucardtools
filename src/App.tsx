@@ -1,5 +1,6 @@
-import { useMemo, useState, type InputHTMLAttributes } from "react";
+import { useEffect, useMemo, useState, type InputHTMLAttributes } from "react";
 import { SMDViewer } from "./components/SMDViewer";
+import { parseSmd } from "./lib/parseSmd";
 import "./App.css";
 
 interface FolderInputProps extends InputHTMLAttributes<HTMLInputElement> {
@@ -36,6 +37,40 @@ interface ImportState {
   title: string;
   detail: string;
 }
+
+interface TextureLink {
+  expected: string;
+  found: FileEntry | null;
+  confidence: "exata" | "provavel" | "faltando";
+}
+
+interface RelatedFile {
+  entry: FileEntry;
+  role: "textura" | "asset";
+  reason: string;
+}
+
+interface ModelAnalysis {
+  loading: boolean;
+  textureNames: string[];
+  textureLinks: TextureLink[];
+  relatedFiles: RelatedFile[];
+  objectCount: number;
+  triangles: number;
+  vertices: number;
+  error: string;
+}
+
+const EMPTY_ANALYSIS: ModelAnalysis = {
+  loading: false,
+  textureNames: [],
+  textureLinks: [],
+  relatedFiles: [],
+  objectCount: 0,
+  triangles: 0,
+  vertices: 0,
+  error: "",
+};
 
 const FILTERS: Array<{ id: CategoryFilter; label: string; hint: string }> = [
   { id: "all", label: "Todos", hint: "Todos os SMD" },
@@ -200,6 +235,77 @@ function countTexturesByExt(entries: FileEntry[]) {
   return out;
 }
 
+function sameFolder(pathA: string, pathB: string): boolean {
+  const folderA = pathA.replace(/\\/g, "/").split("/").slice(0, -1).join("/").toLowerCase();
+  const folderB = pathB.replace(/\\/g, "/").split("/").slice(0, -1).join("/").toLowerCase();
+  return folderA.length > 0 && folderA === folderB;
+}
+
+function displayPath(path: string, max = 54): string {
+  const normalized = path.replace(/\\/g, "/");
+  if (normalized.length <= max) return normalized;
+  return `…${normalized.slice(-(max - 1))}`;
+}
+
+function findTextureEntry(expected: string, textures: FileEntry[]): TextureLink {
+  const expectedFile = expected.replace(/\\/g, "/").split("/").pop()?.toLowerCase() ?? expected.toLowerCase();
+  const expectedBase = cleanName(expected);
+
+  const exact = textures.find(entry => entry.name.toLowerCase() === expectedFile);
+  if (exact) return { expected, found: exact, confidence: "exata" };
+
+  const sameBase = textures.find(entry => cleanName(entry.name) === expectedBase && expectedBase.length > 0);
+  if (sameBase) return { expected, found: sameBase, confidence: "provavel" };
+
+  const fuzzy = textures.find(entry => {
+    const key = cleanName(entry.name);
+    return expectedBase.length >= 5 && (key.includes(expectedBase) || expectedBase.includes(key));
+  });
+
+  if (fuzzy) return { expected, found: fuzzy, confidence: "provavel" };
+
+  return { expected, found: null, confidence: "faltando" };
+}
+
+function collectRelatedFiles(model: FileEntry, assets: FileEntry[], expectedTextures: string[], links: TextureLink[]): RelatedFile[] {
+  const output: RelatedFile[] = [];
+  const used = new Set<string>();
+  const modelKey = cleanName(model.name);
+  const expectedKeys = expectedTextures.map(cleanName).filter(Boolean);
+
+  for (const link of links) {
+    if (link.found && !used.has(link.found.id)) {
+      used.add(link.found.id);
+      output.push({
+        entry: link.found,
+        role: "textura",
+        reason: link.confidence === "exata" ? "Textura informada pelo SMD" : "Textura provável pelo nome",
+      });
+    }
+  }
+
+  for (const asset of assets) {
+    if (used.has(asset.id)) continue;
+    const assetKey = cleanName(asset.name);
+    const relatedByExpected = expectedKeys.some(key => key.length >= 4 && (assetKey === key || assetKey.includes(key) || key.includes(assetKey)));
+    const relatedByModel = modelKey.length >= 4 && (assetKey === modelKey || assetKey.includes(modelKey) || modelKey.includes(assetKey));
+    const relatedByFolder = sameFolder(model.path, asset.path);
+
+    if (relatedByExpected || relatedByModel || relatedByFolder) {
+      used.add(asset.id);
+      output.push({
+        entry: asset,
+        role: isTextureExt(asset.ext) ? "textura" : "asset",
+        reason: relatedByExpected ? "Relacionado à textura esperada" : relatedByModel ? "Mesmo código base do modelo" : "Está na mesma pasta do item",
+      });
+    }
+
+    if (output.length >= 18) break;
+  }
+
+  return output;
+}
+
 export default function App() {
   const [smdFiles, setSmdFiles] = useState<FileEntry[]>([]);
   const [assetFiles, setAssetFiles] = useState<FileEntry[]>([]);
@@ -213,6 +319,7 @@ export default function App() {
     title: "Indexando biblioteca",
     detail: "",
   });
+  const [modelAnalysis, setModelAnalysis] = useState<ModelAnalysis>(EMPTY_ANALYSIS);
 
   const selectedModel = smdFiles.find(entry => entry.id === selectedId) ?? smdFiles[0] ?? null;
   const selectedProfile = selectedModel ? getProfile(selectedModel) : null;
@@ -249,6 +356,50 @@ export default function App() {
     });
     return exact ?? partial ?? null;
   }, [selectedModel, textureFiles]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function analyzeSelectedModel() {
+      if (!selectedModel) {
+        setModelAnalysis(EMPTY_ANALYSIS);
+        return;
+      }
+
+      setModelAnalysis(prev => ({ ...prev, loading: true, error: "" }));
+
+      try {
+        const buffer = await selectedModel.file.arrayBuffer();
+        const parsed = parseSmd(buffer);
+        if (cancelled) return;
+
+        const textureNames = Array.from(new Set([parsed.textureName, ...parsed.textureNames].filter(Boolean)));
+        const textureLinks = textureNames.map(name => findTextureEntry(name, textureFiles));
+        const relatedFiles = collectRelatedFiles(selectedModel, assetFiles, textureNames, textureLinks);
+
+        setModelAnalysis({
+          loading: false,
+          textureNames,
+          textureLinks,
+          relatedFiles,
+          objectCount: parsed.objectCount,
+          triangles: Math.round(parsed.indices.length / 3),
+          vertices: Math.round(parsed.positions.length / 3),
+          error: "",
+        });
+      } catch (error) {
+        if (cancelled) return;
+        setModelAnalysis({
+          ...EMPTY_ANALYSIS,
+          loading: false,
+          error: (error as Error).message || String(error),
+        });
+      }
+    }
+
+    void analyzeSelectedModel();
+    return () => { cancelled = true; };
+  }, [assetFiles, selectedModel, textureFiles]);
 
   async function processFiles(files: FileList | File[]) {
     const fileArray = Array.from(files);
@@ -502,21 +653,75 @@ export default function App() {
         </section>
 
         <aside className="studio-right professional-right">
-          <section className="panel inspector-card professional-inspector">
+          <section className="panel inspector-card professional-inspector item-package-panel">
             <div className="panel-title-row">
-              <h2>Item selecionado</h2>
-              <span>{selectedModel ? "ativo" : "vazio"}</span>
+              <h2>Pacote do item</h2>
+              <span>{selectedModel ? "mapeado" : "vazio"}</span>
             </div>
             {selectedModel && selectedProfile ? (
               <div className="inspector-content">
-                <strong className="inspector-title">{selectedModel.name}</strong>
-                <p>{selectedModel.path}</p>
-                <div className="kv-grid pro-kv">
-                  <span>Categoria</span><strong>{selectedProfile.label}</strong>
-                  <span>Uso</span><strong>{selectedProfile.badge}</strong>
-                  <span>Tamanho</span><strong>{readableSize(selectedModel.file.size)}</strong>
-                  <span>Textura provável</span><strong>{selectedTextureHint?.name ?? "o viewer detecta pelo SMD"}</strong>
+                <div className="selected-heading">
+                  <strong className="inspector-title">{selectedModel.name}</strong>
+                  <span className={`model-badge badge-${selectedProfile.kind}`}>{selectedProfile.badge}</span>
                 </div>
+                <p className="selected-path">{selectedModel.path}</p>
+
+                <div className="package-block primary-file">
+                  <h3>Arquivo principal</h3>
+                  <div className="package-row">
+                    <span className="file-pill smd">SMD</span>
+                    <div>
+                      <strong>{selectedModel.name}</strong>
+                      <small>{displayPath(selectedModel.path, 62)} · {readableSize(selectedModel.file.size)}</small>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="package-block">
+                  <h3>Texturas usadas por este SMD</h3>
+                  {modelAnalysis.loading && <div className="package-hint">Analisando o SMD para descobrir BMP/TGA/DDS/PNG...</div>}
+                  {!modelAnalysis.loading && modelAnalysis.textureLinks.length > 0 && modelAnalysis.textureLinks.map(link => (
+                    <div key={link.expected} className={`package-row ${link.found ? "found" : "missing"}`}>
+                      <span className={`file-pill ${link.found ? "texture" : "missing"}`}>{link.found?.ext?.toUpperCase() || "FALTA"}</span>
+                      <div>
+                        <strong>{link.expected}</strong>
+                        <small>
+                          {link.found
+                            ? `${link.confidence === "exata" ? "encontrada" : "provável"}: ${displayPath(link.found.path, 62)}`
+                            : "não encontrada na pasta carregada"}
+                        </small>
+                      </div>
+                    </div>
+                  ))}
+                  {!modelAnalysis.loading && modelAnalysis.textureLinks.length === 0 && (
+                    <div className="package-hint warn-text">O SMD não informou textura. A ferramenta tentará usar uma textura com o mesmo nome base.</div>
+                  )}
+                </div>
+
+                <div className="package-block">
+                  <h3>Arquivos relacionados encontrados</h3>
+                  {modelAnalysis.relatedFiles.length > 0 ? modelAnalysis.relatedFiles.slice(0, 10).map(item => (
+                    <div key={item.entry.id} className="package-row compact">
+                      <span className={`file-pill ${item.role === "textura" ? "texture" : "asset"}`}>{item.entry.ext.toUpperCase()}</span>
+                      <div>
+                        <strong>{item.entry.name}</strong>
+                        <small>{item.reason} · {displayPath(item.entry.path, 58)}</small>
+                      </div>
+                    </div>
+                  )) : (
+                    <div className="package-hint">Nenhum arquivo relacionado além do SMD foi identificado.</div>
+                  )}
+                </div>
+
+                <div className="kv-grid pro-kv compact-kv">
+                  <span>Categoria</span><strong>{selectedProfile.label}</strong>
+                  <span>Triângulos</span><strong>{modelAnalysis.triangles ? modelAnalysis.triangles.toLocaleString() : "-"}</strong>
+                  <span>Vértices</span><strong>{modelAnalysis.vertices ? modelAnalysis.vertices.toLocaleString() : "-"}</strong>
+                  <span>Objetos</span><strong>{modelAnalysis.objectCount || "-"}</strong>
+                </div>
+
+                {modelAnalysis.error && <div className="package-error">Erro ao analisar SMD: {modelAnalysis.error}</div>}
+
                 <div className="recommendation-box professional-recommendation">
                   <strong>{selectedProfile.action}</strong>
                   <p>{selectedProfile.note}</p>
@@ -529,14 +734,14 @@ export default function App() {
 
           <section className="panel usage-card professional-usage">
             <div className="panel-title-row">
-              <h2>Tipos de item</h2>
-              <span>PT</span>
+              <h2>Classificação</h2>
+              <span>automática</span>
             </div>
-            <div className="usage-list pro-usage-list">
-              <div><strong>Ataque</strong><span>itW*, sword, axe, bow, staff, claw, javelin.</span></div>
-              <div><strong>Defesa</strong><span>itD*, armor, shield, boots, gloves, robe.</span></div>
-              <div><strong>Hair/Mask</strong><span>hair, mask, cap, head e visual de cabeça.</span></div>
-              <div><strong>Texturas</strong><span>Compatível com BMP, TGA, DDS, PNG, JPG.</span></div>
+            <div className="usage-list pro-usage-list compact-usage">
+              <div><strong>Ataque</strong><span>Armas: itW*, sword, axe, bow, staff, javelin.</span></div>
+              <div><strong>Defesa</strong><span>Escudo, armor, bota, luva, robe e partes defensivas.</span></div>
+              <div><strong>Hair/Mask</strong><span>Cabelo, máscara, cap, head e visual de cabeça.</span></div>
+              <div><strong>Texturas</strong><span>BMP, TGA, DDS, PNG e JPG importados junto do SMD.</span></div>
             </div>
           </section>
 
