@@ -279,10 +279,10 @@ async function buildSmdModel(file: File, extraFiles: File[], textured: boolean, 
   const errors: string[] = [];
   onProgress?.(12, "Lendo arquivo SMD");
   const buffer = await file.arrayBuffer();
-  onProgress?.(28, "Interpretando malha");
+  onProgress?.(22, "Interpretando malha SMD");
   const meshData = parseSmd(buffer);
 
-  onProgress?.(44, "Montando geometria 3D");
+  onProgress?.(42, "Montando geometria 3D");
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute("position", new THREE.BufferAttribute(meshData.positions, 3));
   geometry.setAttribute("uv", new THREE.BufferAttribute(meshData.uvs, 2));
@@ -372,7 +372,7 @@ export function SMDViewer({ smdFile, smdPath, extraFiles, characterFile = null, 
     wireframe: false,
     grid: false,
     axes: false,
-    autoRotate: true,
+    autoRotate: false,
     darkBackground: true,
     characterPreview: false,
     ptAxisFix: true,
@@ -382,7 +382,7 @@ export function SMDViewer({ smdFile, smdPath, extraFiles, characterFile = null, 
   const [loading, setLoading] = useState({
     active: true,
     progress: 8,
-    title: "Loading 3D model",
+    title: "Carregando modelo 3D",
     detail: smdFile.name,
   });
 
@@ -400,7 +400,7 @@ export function SMDViewer({ smdFile, smdPath, extraFiles, characterFile = null, 
 
     setErrors([]);
     setInfo(null);
-    setLoading({ active: true, progress: 6, title: "Loading 3D model", detail: smdFile.name });
+    setLoading({ active: true, progress: 6, title: "Carregando modelo 3D", detail: smdFile.name });
     resetViewRef.current = null;
 
     const scene = new THREE.Scene();
@@ -469,12 +469,12 @@ export function SMDViewer({ smdFile, smdPath, extraFiles, characterFile = null, 
 
     function updateLoading(progress: number, detail: string) {
       if (disposed) return;
-      setLoading({ active: true, progress: Math.max(3, Math.min(96, progress)), title: "Loading 3D model", detail });
+      setLoading({ active: true, progress: Math.max(3, Math.min(96, progress)), title: "Carregando modelo 3D", detail });
     }
 
     function finishLoading(detail = "Pronto") {
       if (disposed) return;
-      setLoading({ active: true, progress: 100, title: "Loading 3D model", detail });
+      setLoading({ active: true, progress: 100, title: "Carregando modelo 3D", detail });
       loadingTimer = window.setTimeout(() => {
         if (!disposed) setLoading(prev => ({ ...prev, active: false }));
       }, 260);
@@ -487,9 +487,9 @@ export function SMDViewer({ smdFile, smdPath, extraFiles, characterFile = null, 
       camera.near = Math.max(0.01, distance / 2000);
       camera.far = Math.max(5000, distance * 40);
       if (options.showcase) {
-        camera.position.set(distance * 0.72, distance * 0.38, distance * 0.82);
+        camera.position.set(0, targetY + distance * 0.16, distance * 0.92);
       } else {
-        camera.position.set(distance * 0.88, distance * 0.48, distance * 0.92);
+        camera.position.set(distance * 0.72, targetY + distance * 0.22, distance * 0.84);
       }
       camera.updateProjectionMatrix();
       controls.target.set(0, targetY, 0);
@@ -529,7 +529,9 @@ export function SMDViewer({ smdFile, smdPath, extraFiles, characterFile = null, 
         try {
           item = await buildSmdModel(smdFile, extraFiles, options.textured, options.wireframe, 0xaab6ff, updateLoading);
         } catch (error) {
-          setErrors(prev => [...prev, ...localErrors, `Erro ao ler SMD: ${(error as Error).message}`]);
+          const message = (error as Error).message || String(error);
+          setErrors(prev => [...prev, ...localErrors, `Erro ao ler SMD: ${message}`]);
+          setLoading({ active: false, progress: 0, title: "Falha ao carregar modelo", detail: message });
           return;
         }
       } else {
@@ -597,7 +599,7 @@ export function SMDViewer({ smdFile, smdPath, extraFiles, characterFile = null, 
 
     loadScene().catch(error => {
       setErrors(prev => [...prev, `Erro inesperado: ${(error as Error).message}`]);
-      setLoading({ active: false, progress: 0, title: "Loading 3D model", detail: "Falha ao carregar" });
+      setLoading({ active: false, progress: 0, title: "Carregando modelo 3D", detail: "Falha ao carregar" });
     });
 
     function animate() {
@@ -659,7 +661,7 @@ export function SMDViewer({ smdFile, smdPath, extraFiles, characterFile = null, 
         grid: false,
         axes: false,
         darkBackground: true,
-        autoRotate: true,
+        autoRotate: false,
       };
     });
   }
@@ -742,7 +744,7 @@ export function SMDViewer({ smdFile, smdPath, extraFiles, characterFile = null, 
         <button type="button" className="export" onClick={exportPng}>Exportar PNG</button>
       </div>
 
-      <div className="help-pill">{options.showcase ? "Showcase: giro premium · zoom suave · exporte PNG" : "Mouse: girar · Scroll: zoom · Direito: mover"}</div>
+      <div className="help-pill">{options.showcase ? "Showcase: arraste para girar · zoom suave · exporte PNG" : "Mouse: girar · Scroll: zoom · Direito: mover"}</div>
 
       {/* Personagem preview removido: somente Showcase profissional para modelos isolados. */}
 

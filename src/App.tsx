@@ -46,7 +46,7 @@ interface TextureLink {
 
 interface RelatedFile {
   entry: FileEntry;
-  role: "textura" | "asset";
+  role: "modelo" | "textura" | "asset";
   reason: string;
 }
 
@@ -295,7 +295,7 @@ function collectRelatedFiles(model: FileEntry, assets: FileEntry[], expectedText
       used.add(asset.id);
       output.push({
         entry: asset,
-        role: isTextureExt(asset.ext) ? "textura" : "asset",
+        role: asset.ext === "smd" ? "modelo" : isTextureExt(asset.ext) ? "textura" : "asset",
         reason: relatedByExpected ? "Relacionado à textura esperada" : relatedByModel ? "Mesmo código base do modelo" : "Está na mesma pasta do item",
       });
     }
@@ -375,7 +375,11 @@ export default function App() {
 
         const textureNames = Array.from(new Set([parsed.textureName, ...parsed.textureNames].filter(Boolean)));
         const textureLinks = textureNames.map(name => findTextureEntry(name, textureFiles));
-        const relatedFiles = collectRelatedFiles(selectedModel, assetFiles, textureNames, textureLinks);
+        const relatedCandidates = [
+          ...smdFiles.filter(entry => entry.id !== selectedModel.id),
+          ...assetFiles,
+        ];
+        const relatedFiles = collectRelatedFiles(selectedModel, relatedCandidates, textureNames, textureLinks);
 
         setModelAnalysis({
           loading: false,
@@ -399,7 +403,7 @@ export default function App() {
 
     void analyzeSelectedModel();
     return () => { cancelled = true; };
-  }, [assetFiles, selectedModel, textureFiles]);
+  }, [assetFiles, selectedModel, smdFiles, textureFiles]);
 
   async function processFiles(files: FileList | File[]) {
     const fileArray = Array.from(files);
@@ -480,13 +484,13 @@ export default function App() {
           <span className="brand-mark">AT</span>
           <div>
             <h1>ALUCARD-TOOLS</h1>
-            <p>Showcase profissional para SMD do PristonTale · leitura local no navegador</p>
+            <p>Preview profissional de itens SMD do PristonTale · arquivos lidos localmente</p>
           </div>
         </div>
 
         <div className="top-actions">
           <label className="action-button primary">
-            Abrir tmABCD / pasta do cliente
+            Abrir pasta tmABCD
             <FolderInput
               type="file"
               webkitdirectory=""
@@ -539,9 +543,9 @@ export default function App() {
               <span>local</span>
             </div>
             <div className="guide-steps">
-              <div><strong>1</strong><span>Abrir a pasta <b>tmABCD</b> ou uma pasta do item.</span></div>
-              <div><strong>2</strong><span>Buscar por código: <b>itws</b>, <b>itda</b>, <b>hair</b>, <b>shield</b>.</span></div>
-              <div><strong>3</strong><span>Usar Showcase + Textura + Centralizar e exportar PNG.</span></div>
+              <div><strong>1</strong><span>Abrir a <b>tmABCD</b> completa do cliente.</span></div>
+              <div><strong>2</strong><span>Filtrar por <b>Ataque</b>, <b>Defesa</b>, <b>Hair</b> ou buscar o código.</span></div>
+              <div><strong>3</strong><span>Selecionar o SMD e conferir o pacote do item no painel direito.</span></div>
             </div>
             <p className="privacy-note">SMD, BMP, TGA, DDS, PNG e JPG são lidos no navegador. Nada é enviado ao servidor.</p>
           </section>
@@ -623,7 +627,7 @@ export default function App() {
               <p>Selecione a tmABCD ou uma pasta com SMD e texturas. Depois filtre por Ataque, Defesa, Hair, Asas ou Skins.</p>
               <div className="hero-actions">
                 <label className="action-button primary large">
-                  Abrir tmABCD / pasta completa
+                  Abrir pasta tmABCD
                   <FolderInput
                     type="file"
                     webkitdirectory=""
@@ -699,10 +703,10 @@ export default function App() {
                 </div>
 
                 <div className="package-block">
-                  <h3>Arquivos relacionados encontrados</h3>
+                  <h3>Arquivos que podem compor o item</h3>
                   {modelAnalysis.relatedFiles.length > 0 ? modelAnalysis.relatedFiles.slice(0, 10).map(item => (
                     <div key={item.entry.id} className="package-row compact">
-                      <span className={`file-pill ${item.role === "textura" ? "texture" : "asset"}`}>{item.entry.ext.toUpperCase()}</span>
+                      <span className={`file-pill ${item.role === "modelo" ? "smd" : item.role === "textura" ? "texture" : "asset"}`}>{item.entry.ext.toUpperCase()}</span>
                       <div>
                         <strong>{item.entry.name}</strong>
                         <small>{item.reason} · {displayPath(item.entry.path, 58)}</small>

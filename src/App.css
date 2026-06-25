@@ -2214,3 +2214,179 @@ input[type="file"] { display: none; }
     transform: none;
   }
 }
+
+
+/* =========================================================
+   ALUCARD-TOOLS · UX cleanup: professional fixed layout
+   ========================================================= */
+.professional-shell .workspace {
+  grid-template-columns: 340px minmax(520px, 1fr) 390px;
+}
+
+.professional-left,
+.professional-right {
+  min-width: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.professional-left .panel,
+.professional-right .panel {
+  border-radius: 14px;
+}
+
+.professional-viewer {
+  min-width: 0;
+  border-left: 1px solid rgba(146, 169, 255, 0.10);
+  border-right: 1px solid rgba(146, 169, 255, 0.10);
+}
+
+.viewer-shell {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-areas:
+    "toolbar"
+    "canvas";
+  background: radial-gradient(circle at 50% 45%, rgba(84, 104, 255, 0.12), transparent 35%), #060812;
+}
+
+.canvas-host {
+  grid-area: canvas;
+  position: relative;
+  min-height: 0;
+  height: 100%;
+}
+
+.viewer-toolbar,
+.showcase-mode .viewer-toolbar,
+.studio-workspace .viewer-toolbar {
+  grid-area: toolbar;
+  position: relative;
+  inset: auto;
+  top: auto;
+  left: auto;
+  right: auto;
+  transform: none;
+  justify-self: center;
+  align-self: center;
+  width: auto;
+  max-width: calc(100% - 28px);
+  margin: 12px auto 8px;
+  padding: 8px;
+  gap: 7px;
+  border-radius: 14px;
+  background: rgba(7, 10, 22, 0.84);
+  border: 1px solid rgba(157, 177, 255, 0.16);
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.24);
+  backdrop-filter: blur(12px);
+  pointer-events: auto;
+}
+
+.viewer-toolbar button {
+  min-height: 34px;
+  padding: 7px 11px;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.viewer-toolbar button.export {
+  margin-left: 8px;
+}
+
+.help-pill,
+.showcase-mode .help-pill {
+  position: absolute;
+  top: 76px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 6;
+  opacity: 0.72;
+}
+
+.showcase-panel {
+  left: 18px;
+  bottom: 18px;
+  width: min(430px, calc(100% - 36px));
+  max-height: 42%;
+  overflow: auto;
+}
+
+.showcase-footer {
+  right: 18px;
+  bottom: 18px;
+}
+
+.item-package-panel {
+  max-height: none;
+}
+
+.inspector-content,
+.compact-usage,
+.professional-assets .asset-list {
+  max-height: none;
+}
+
+.package-block {
+  gap: 7px;
+}
+
+.package-row {
+  grid-template-columns: 54px minmax(0, 1fr);
+}
+
+.file-pill.smd { background: rgba(107, 124, 255, 0.34); }
+.file-pill.texture { background: rgba(63, 210, 143, 0.28); }
+.file-pill.missing { background: rgba(255, 139, 84, 0.34); }
+
+.model-list.professional-model-list {
+  padding-right: 4px;
+}
+
+.model-card.professional-model-card {
+  min-height: 74px;
+  padding: 11px 12px;
+}
+
+.texture-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 7px;
+  padding: 0 14px 10px;
+}
+
+.texture-stats span {
+  padding: 7px 8px;
+  border-radius: 10px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(157,177,255,0.10);
+  color: #9eabd0;
+  font-size: 11px;
+}
+.texture-stats b { color: #fff; float: right; }
+
+.model-loading-overlay {
+  grid-area: canvas;
+}
+
+.model-loading-card {
+  border-radius: 18px;
+  background: rgba(8, 12, 28, 0.88);
+  border: 1px solid rgba(166, 186, 255, 0.16);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.38);
+}
+
+@media (max-width: 1500px) {
+  .professional-shell .workspace {
+    grid-template-columns: 310px minmax(440px, 1fr) 340px;
+  }
+  .viewer-toolbar button { font-size: 12px; padding: 7px 9px; }
+}
+
+@media (max-width: 1280px) {
+  .professional-shell .workspace {
+    grid-template-columns: 300px minmax(0, 1fr);
+  }
+  .professional-right { display: none; }
+  .showcase-panel { max-width: 400px; }
+}
