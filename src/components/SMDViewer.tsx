@@ -361,12 +361,14 @@ export function SMDViewer({ smdFile, smdPath, extraFiles, characterFile = null, 
   const mountRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<any>(null);
   const resetViewRef = useRef<(() => void) | null>(null);
+  const activeModelRef = useRef<THREE.Object3D | null>(null);
   const [info, setInfo] = useState<ViewerInfo | null>(null);
   const [errors, setErrors] = useState<string[]>([]);
   const [copiedPreset, setCopiedPreset] = useState(false);
   const [characterClass] = useState<CharacterClass>("Knight");
-  const [equipSlot, setEquipSlot] = useState<EquipSlot>("weapon");
-  const [equip, setEquip] = useState<EquipTransform>(DEFAULT_EQUIP.weapon);
+  const [equipSlot, setEquipSlot] = useState<EquipSlot>("free");
+  const [equip, setEquip] = useState<EquipTransform>(DEFAULT_EQUIP.free);
+  const [showTransformPanel, setShowTransformPanel] = useState(true);
   const [options, setOptions] = useState<ViewOptions>({
     textured: true,
     wireframe: false,
@@ -386,10 +388,23 @@ export function SMDViewer({ smdFile, smdPath, extraFiles, characterFile = null, 
     detail: smdFile.name,
   });
 
+  function applyManualObjectTransform(object: THREE.Object3D | null, transform: EquipTransform) {
+    if (!object) return;
+    object.position.set(transform.offsetX, transform.offsetY, transform.offsetZ);
+    object.rotation.set(degToRad(transform.rotationX), degToRad(transform.rotationY), degToRad(transform.rotationZ));
+    object.scale.setScalar(Math.max(0.01, transform.scale));
+  }
+
   useEffect(() => {
-    const nextSlot = guessSlotFromName(smdFile.name);
-    setEquipSlot(nextSlot);
-    setEquip(DEFAULT_EQUIP[nextSlot]);
+    applyManualObjectTransform(activeModelRef.current, equip);
+  }, [equip]);
+
+  useEffect(() => {
+    // Cada novo modelo precisa iniciar parado e sem preset torto.
+    // O usuário ajusta posição/rotação livremente no painel "Ajuste manual".
+    setEquipSlot("free");
+    setEquip(DEFAULT_EQUIP.free);
+    setOptions(prev => ({ ...prev, autoRotate: false }));
     setCopiedPreset(false);
   }, [smdFile]);
 
@@ -402,6 +417,7 @@ export function SMDViewer({ smdFile, smdPath, extraFiles, characterFile = null, 
     setInfo(null);
     setLoading({ active: true, progress: 6, title: "Carregando modelo 3D", detail: smdFile.name });
     resetViewRef.current = null;
+    activeModelRef.current = null;
 
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(options.showcase ? 0x060814 : (options.darkBackground ? 0x070914 : 0x232a3a));
@@ -549,13 +565,10 @@ export function SMDViewer({ smdFile, smdPath, extraFiles, characterFile = null, 
       }
 
       if (item && !skipEquipment) {
-        if (effectiveCharacterPreview) {
-          const anchor = getAnchor(equipSlot);
-          const autoScale = equip.autoFit ? getFitSize(equipSlot) / item.maxDim : 1;
-          item.group.position.set(anchor.x + equip.offsetX, anchor.y + equip.offsetY, anchor.z + equip.offsetZ);
-          item.group.rotation.set(degToRad(equip.rotationX), degToRad(equip.rotationY), degToRad(equip.rotationZ));
-          item.group.scale.setScalar(Math.max(0.01, autoScale * equip.scale));
-        }
+        // Showcase trabalha com o objeto livre, sem rotação automática e sem preset escondido.
+        // O ajuste abaixo é atualizado em tempo real pelo painel "Ajuste manual" sem recarregar o SMD.
+        applyManualObjectTransform(item.group, equip);
+        activeModelRef.current = item.group;
         rootGroup.add(item.group);
       }
 
@@ -643,7 +656,7 @@ export function SMDViewer({ smdFile, smdPath, extraFiles, characterFile = null, 
       rendererRef.current = null;
       if (renderer.domElement.parentElement === host) host.removeChild(renderer.domElement);
     };
-  }, [smdFile, smdPath, extraFiles, characterFile, characterPath, options, equipSlot, equip, characterClass]);
+  }, [smdFile, smdPath, extraFiles, characterFile, characterPath, options, characterClass]);
 
   function toggleOption(name: keyof ViewOptions) {
     setOptions(prev => ({ ...prev, [name]: !prev[name] }));
@@ -688,6 +701,12 @@ export function SMDViewer({ smdFile, smdPath, extraFiles, characterFile = null, 
 
   function updateEquip(name: keyof EquipTransform, value: number | boolean) {
     setEquip(prev => ({ ...prev, [name]: value }));
+    setCopiedPreset(false);
+  }
+
+  function resetManualTransform() {
+    setEquipSlot("free");
+    setEquip(DEFAULT_EQUIP.free);
     setCopiedPreset(false);
   }
 
@@ -737,6 +756,7 @@ export function SMDViewer({ smdFile, smdPath, extraFiles, characterFile = null, 
         <button type="button" className={options.grid ? "active" : ""} onClick={() => toggleOption("grid")}>Grid</button>
         <button type="button" className={options.axes ? "active" : ""} onClick={() => toggleOption("axes")}>Eixos</button>
         <button type="button" className={options.autoRotate ? "active" : ""} onClick={() => toggleOption("autoRotate")}>Auto giro</button>
+        <button type="button" className={showTransformPanel ? "active" : ""} onClick={() => setShowTransformPanel(prev => !prev)}>Ajuste manual</button>
         <button type="button" className={options.ptAxisFix ? "active" : ""} onClick={() => toggleOption("ptAxisFix")}>Eixo PT</button>
         <button type="button" onClick={() => toggleOption("darkBackground")}>Fundo</button>
         <button type="button" onClick={() => resetViewRef.current?.()}>Centralizar</button>
@@ -748,6 +768,29 @@ export function SMDViewer({ smdFile, smdPath, extraFiles, characterFile = null, 
 
       {/* Personagem preview removido: somente Showcase profissional para modelos isolados. */}
 
+
+
+      {showTransformPanel && info && (
+        <div className="manual-transform-panel">
+          <div className="manual-title">
+            <strong>Ajuste manual do objeto</strong>
+            <span>Move, gira e escala sem recarregar o modelo.</span>
+          </div>
+          <div className="manual-range-grid">
+            <label><span>X</span><input type="range" min="-80" max="80" step="0.1" value={equip.offsetX} onChange={event => updateEquip("offsetX", Number(event.target.value))} /><b>{equip.offsetX.toFixed(1)}</b></label>
+            <label><span>Y</span><input type="range" min="-80" max="80" step="0.1" value={equip.offsetY} onChange={event => updateEquip("offsetY", Number(event.target.value))} /><b>{equip.offsetY.toFixed(1)}</b></label>
+            <label><span>Z</span><input type="range" min="-80" max="80" step="0.1" value={equip.offsetZ} onChange={event => updateEquip("offsetZ", Number(event.target.value))} /><b>{equip.offsetZ.toFixed(1)}</b></label>
+            <label><span>Rot X</span><input type="range" min="-180" max="180" step="1" value={equip.rotationX} onChange={event => updateEquip("rotationX", Number(event.target.value))} /><b>{equip.rotationX.toFixed(0)}°</b></label>
+            <label><span>Rot Y</span><input type="range" min="-180" max="180" step="1" value={equip.rotationY} onChange={event => updateEquip("rotationY", Number(event.target.value))} /><b>{equip.rotationY.toFixed(0)}°</b></label>
+            <label><span>Rot Z</span><input type="range" min="-180" max="180" step="1" value={equip.rotationZ} onChange={event => updateEquip("rotationZ", Number(event.target.value))} /><b>{equip.rotationZ.toFixed(0)}°</b></label>
+            <label><span>Escala</span><input type="range" min="0.05" max="5" step="0.01" value={equip.scale} onChange={event => updateEquip("scale", Number(event.target.value))} /><b>{equip.scale.toFixed(2)}</b></label>
+          </div>
+          <div className="manual-actions">
+            <button type="button" onClick={resetManualTransform}>Reset objeto</button>
+            <button type="button" onClick={copyPreset}>{copiedPreset ? "Copiado" : "Copiar ajuste"}</button>
+          </div>
+        </div>
+      )}
 
       {options.showcase && info && (
         <div className="showcase-panel">
