@@ -21,6 +21,7 @@ interface ViewOptions {
   darkBackground: boolean;
   characterPreview: boolean;
   ptAxisFix: boolean;
+  htmlDoll: boolean;
 }
 
 type EquipSlot = "free" | "weapon" | "shield" | "helmet" | "armor" | "back";
@@ -351,6 +352,73 @@ async function buildSmdModel(file: File, extraFiles: File[], textured: boolean, 
   };
 }
 
+
+function guessCharacterClassFromName(fileName: string, fallback: CharacterClass): CharacterClass {
+  const name = fileName.toLowerCase();
+  if (/(archer|arc)/.test(name)) return "Archer";
+  if (/(atalanta|ata|atal)/.test(name)) return "Atalanta";
+  if (/(mecanico|mechanic|mechanician|mec|mech|ms)/.test(name)) return "Mechanician";
+  if (/(mago|magician|mg)/.test(name)) return "Magician";
+  if (/(sacer|priest|priestess|prs|pr)/.test(name)) return "Priestess";
+  if (/(pikeman|pike|pik|ps)/.test(name)) return "Pikeman";
+  if (/(fighter|lutador|lut|fs)/.test(name)) return "Fighter";
+  if (/(kinght|knight|kin|ks)/.test(name)) return "Knight";
+  return fallback;
+}
+
+function HtmlPaperDoll({
+  characterFile,
+  selectedFile,
+  slot,
+  characterClass,
+}: {
+  characterFile?: File | null;
+  selectedFile: File;
+  slot: EquipSlot;
+  characterClass: CharacterClass;
+}) {
+  const displayClass = guessCharacterClassFromName(characterFile?.name ?? selectedFile.name, characterClass);
+  const isSame = isSameFile(characterFile, selectedFile);
+  const modelLabel = isSame ? "base do personagem" : selectedFile.name;
+
+  return (
+    <div className={`html-doll html-doll-${displayClass.toLowerCase()}`}>
+      <div className="html-doll-stage">
+        <div className="html-doll-aura" />
+        <div className="html-doll-character">
+          <div className="doll-shadow" />
+          <div className="doll-backpack" data-active={slot === "back" && !isSame} />
+          <div className="doll-head">
+            <span className="doll-face" />
+            <span className="doll-helmet" data-active={slot === "helmet" && !isSame}>{slot === "helmet" && !isSame ? "SMD" : ""}</span>
+          </div>
+          <div className="doll-neck" />
+          <div className="doll-arm doll-arm-left"><span /></div>
+          <div className="doll-arm doll-arm-right"><span /></div>
+          <div className="doll-weapon" data-active={slot === "weapon" && !isSame}><span /></div>
+          <div className="doll-shield" data-active={slot === "shield" && !isSame}><span /></div>
+          <div className="doll-body">
+            <div className="doll-chest" data-active={(slot === "armor" || isSame) ? "true" : "false"}>
+              {(slot === "armor" || isSame) && <span>{isSame ? "BASE" : "ARMOR"}</span>}
+            </div>
+            <div className="doll-waist" />
+          </div>
+          <div className="doll-leg doll-leg-left"><span /></div>
+          <div className="doll-leg doll-leg-right"><span /></div>
+        </div>
+      </div>
+
+      <div className="html-doll-card">
+        <strong>Personagem montado · HTML</strong>
+        <span>Classe: {displayClass}</span>
+        <span>Base: {characterFile?.name ?? "manequim técnico"}</span>
+        <span>Equipado: {modelLabel}</span>
+        <small>Este modo é uma prévia visual montada por camadas HTML/CSS. Ele serve para catálogo/loja enquanto o parser 3D real do personagem é evoluído.</small>
+      </div>
+    </div>
+  );
+}
+
 export function SMDViewer({ smdFile, smdPath, extraFiles, characterFile = null, characterPath = "" }: Props) {
   const mountRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<any>(null);
@@ -370,6 +438,7 @@ export function SMDViewer({ smdFile, smdPath, extraFiles, characterFile = null, 
     darkBackground: true,
     characterPreview: true,
     ptAxisFix: false,
+    htmlDoll: false,
   });
 
   useEffect(() => {
@@ -627,11 +696,20 @@ export function SMDViewer({ smdFile, smdPath, extraFiles, characterFile = null, 
 
   return (
     <div className="viewer-shell">
-      <div ref={mountRef} className="canvas-host" />
+      <div ref={mountRef} className={`canvas-host ${options.htmlDoll ? "canvas-muted" : ""}`} />
+      {options.characterPreview && options.htmlDoll && (
+        <HtmlPaperDoll
+          characterFile={characterFile}
+          selectedFile={smdFile}
+          slot={equipSlot}
+          characterClass={characterClass}
+        />
+      )}
       <div className="watermark">ALUCARD-TOOLS</div>
 
       <div className="viewer-toolbar">
         <button type="button" className={options.characterPreview ? "active" : ""} onClick={() => toggleOption("characterPreview")}>Personagem</button>
+        <button type="button" className={options.htmlDoll ? "active" : ""} onClick={() => toggleOption("htmlDoll")}>HTML</button>
         <button type="button" className={options.textured ? "active" : ""} onClick={() => toggleOption("textured")}>Textura</button>
         <button type="button" className={options.wireframe ? "active" : ""} onClick={() => toggleOption("wireframe")}>Wireframe</button>
         <button type="button" className={options.grid ? "active" : ""} onClick={() => toggleOption("grid")}>Grid</button>
