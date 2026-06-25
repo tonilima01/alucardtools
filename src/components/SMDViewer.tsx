@@ -341,12 +341,12 @@ export function SMDViewer({ smdFile, smdPath, extraFiles, characterFile = null, 
   const [options, setOptions] = useState<ViewOptions>({
     textured: true,
     wireframe: false,
-    grid: true,
-    axes: true,
-    autoRotate: false,
+    grid: false,
+    axes: false,
+    autoRotate: true,
     darkBackground: true,
     characterPreview: false,
-    ptAxisFix: false,
+    ptAxisFix: true,
     showcase: true,
   });
 
