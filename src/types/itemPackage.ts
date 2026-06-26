@@ -1,23 +1,19 @@
 export type AssetKind = "smd" | "texture" | "unknown";
 
-export type ItemType =
-  | "ataque"
-  | "defesa"
-  | "hair"
-  | "asa"
-  | "escudo"
-  | "skin"
-  | "personagem"
-  | "outros";
+export type ItemType = "hair" | "armor" | "costume" | "outros";
+export type ItemSlot = "head" | "body" | "unknown";
 
-export type ItemSlot =
-  | "weapon"
-  | "body"
-  | "head"
-  | "shield"
-  | "wing"
-  | "skin"
-  | "character"
+export type CharacterClassId =
+  | "fs"
+  | "ks"
+  | "ata"
+  | "as"
+  | "ms"
+  | "mg"
+  | "prs"
+  | "pik"
+  | "ass"
+  | "sha"
   | "unknown";
 
 export interface IndexedFile {
@@ -35,6 +31,14 @@ export interface TextureMatch {
   reason: "smd-ref" | "same-base" | "family" | "near-name";
 }
 
+export interface CharacterBaseCandidate {
+  classId: CharacterClassId;
+  className: string;
+  smd: IndexedFile;
+  textures: TextureMatch[];
+  confidence: "high" | "medium" | "low";
+}
+
 export interface ItemPackage {
   id: string;
   displayName: string;
@@ -46,6 +50,9 @@ export interface ItemPackage {
   familyKey: string;
   itemType: ItemType;
   slot: ItemSlot;
+  classId: CharacterClassId;
+  className: string;
+  baseCharacter: CharacterBaseCandidate | null;
   isComplete: boolean;
   sourceFolder: string;
   score: number;

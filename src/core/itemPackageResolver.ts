@@ -1,5 +1,7 @@
-import type { IndexedFile, ItemPackage, TextureMatch } from "../types/itemPackage";
-import { classifyItemType, classifySlot } from "./itemClassifier";
+import type { CharacterBaseCandidate, CharacterClassId, IndexedFile, ItemPackage, TextureMatch } from "../types/itemPackage";
+import { findBaseForClass, resolveBaseCharacters } from "./baseCharacterResolver";
+import { detectClassFromName } from "./classDetector";
+import { classifyItemType, classifySlot, isSupportedVisualType } from "./itemClassifier";
 import { extractFamilyKey, isSmdExt, isTextureExt, normalizeLoose, normalizeName, stripExt } from "./nameRules";
 import { parseSmdTextureRefs } from "./smdTextureRefs";
 
@@ -37,14 +39,33 @@ function packageScore(pkg: ItemPackage): number {
   let score = 0;
   if (pkg.isComplete) score += 50;
   score += Math.min(pkg.textures.length, 4) * 10;
-  if (pkg.itemType === "ataque" || pkg.itemType === "escudo" || pkg.itemType === "asa" || pkg.itemType === "hair") score += 25;
-  if (pkg.itemType === "personagem") score -= 50;
+  if (pkg.itemType === "armor" || pkg.itemType === "costume" || pkg.itemType === "hair") score += 40;
+  if (pkg.baseCharacter) score += 25;
+  if (pkg.classId !== "unknown") score += 8;
   return score;
+}
+
+function detectClassWithFallback(smd: IndexedFile, expectedTextures: string[], textures: TextureMatch[]): CharacterClassId {
+  let classId = detectClassFromName(smd.name);
+  if (classId !== "unknown") return classId;
+
+  for (const tex of textures) {
+    classId = detectClassFromName(tex.file.name);
+    if (classId !== "unknown") return classId;
+  }
+
+  for (const ref of expectedTextures) {
+    classId = detectClassFromName(ref);
+    if (classId !== "unknown") return classId;
+  }
+
+  return "unknown";
 }
 
 export async function buildItemPackages(files: IndexedFile[], options: BuildOptions = {}): Promise<ItemPackage[]> {
   const smdFiles = files.filter(f => isSmdExt(f.ext));
   const textureFiles = files.filter(f => isTextureExt(f.ext));
+  const baseCharacters: CharacterBaseCandidate[] = resolveBaseCharacters(files);
   const allByLowerName = new Map<string, IndexedFile[]>();
 
   for (const f of textureFiles) {
@@ -59,6 +80,9 @@ export async function buildItemPackages(files: IndexedFile[], options: BuildOpti
   for (let i = 0; i < smdFiles.length; i++) {
     const smd = smdFiles[i];
     options.onProgress?.(i + 1, smdFiles.length, `Resolvendo pacote ${smd.name}`);
+
+    const itemType = classifyItemType(smd.name);
+    if (!isSupportedVisualType(itemType)) continue;
 
     let expectedTextures: string[] = [];
     try {
@@ -100,8 +124,9 @@ export async function buildItemPackages(files: IndexedFile[], options: BuildOpti
 
     const familyKey = extractFamilyKey(smd.name);
     const relatedFiles = relatedByFolderOrFamily(smd, files, familyKey);
-    const itemType = classifyItemType(smd.name);
     const slot = classifySlot(smd.name);
+    const classId = detectClassWithFallback(smd, expectedTextures, matched);
+    const baseCharacter = findBaseForClass(classId, baseCharacters);
 
     const pkg: ItemPackage = {
       id: `${smd.path}::${smd.size}`,
@@ -114,6 +139,9 @@ export async function buildItemPackages(files: IndexedFile[], options: BuildOpti
       familyKey,
       itemType,
       slot,
+      classId,
+      className: baseCharacter?.className ?? (classId === "unknown" ? "Não detectada" : classId.toUpperCase()),
+      baseCharacter,
       isComplete: matched.length > 0 && missing.length === 0,
       sourceFolder: smd.folder,
       score: 0,

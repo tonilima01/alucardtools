@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { buildItemPackages } from "../core/itemPackageResolver";
 import { indexFileList, mergeIndexedFiles } from "../core/fileIndex";
-import { isSmdExt, isTextureExt } from "../core/nameRules";
+import { isTextureExt } from "../core/nameRules";
 import type { IndexedFile, ItemPackage, PackageStats } from "../types/itemPackage";
 
 export function useClientLibrary() {
@@ -13,7 +13,7 @@ export function useClientLibrary() {
   const [error, setError] = useState<string | null>(null);
 
   const stats: PackageStats = useMemo(() => {
-    const smdCount = files.filter(f => isSmdExt(f.ext)).length;
+    const smdCount = packages.length;
     const textureCount = files.filter(f => isTextureExt(f.ext)).length;
     const completeCount = packages.filter(p => p.textures.length > 0).length;
     return { smdCount, textureCount, completeCount, incompleteCount: packages.length - completeCount };

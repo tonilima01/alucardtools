@@ -3,7 +3,7 @@ import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { parseSmd } from "../lib/parseSmd";
 import { textureFromFile } from "../lib/decryptTexture";
-import type { ItemPackage } from "../types/itemPackage";
+import type { CharacterBaseCandidate, ItemPackage, TextureMatch } from "../types/itemPackage";
 import { LoadingOverlay } from "./LoadingOverlay";
 
 interface Props {
@@ -17,6 +17,7 @@ interface ViewerStats {
   bounds: string;
   texture: string;
   status: string;
+  base: string;
 }
 
 interface ManualTransform {
@@ -31,24 +32,24 @@ interface ManualTransform {
 
 const DEFAULT_TRANSFORM: ManualTransform = { x: 0, y: 0, z: 0, rx: 0, ry: 0, rz: 0, scale: 1 };
 
-function boundsText(box: any): string {
+function boundsText(box: THREE.Box3): string {
   const s = new THREE.Vector3();
   box.getSize(s);
-  return `${s.x.toFixed(1)} Ã— ${s.y.toFixed(1)} Ã— ${s.z.toFixed(1)}`;
+  return `${s.x.toFixed(1)} × ${s.y.toFixed(1)} × ${s.z.toFixed(1)}`;
 }
 
-function pickBestTexture(item: ItemPackage, textureNames: string[]): File | null {
-  if (!item.textures.length) return null;
+function pickBestTexture(textures: TextureMatch[], textureNames: string[]): File | null {
+  if (!textures.length) return null;
   for (const texName of textureNames) {
-    const exact = item.textures.find(t => t.file.name.toLowerCase() === texName.toLowerCase());
+    const exact = textures.find(t => t.file.name.toLowerCase() === texName.toLowerCase());
     if (exact) return exact.file.file;
-    const sameBase = item.textures.find(t => t.file.name.replace(/\.[^.]+$/, "").toLowerCase() === texName.replace(/\.[^.]+$/, "").toLowerCase());
+    const sameBase = textures.find(t => t.file.name.replace(/\.[^.]+$/, "").toLowerCase() === texName.replace(/\.[^.]+$/, "").toLowerCase());
     if (sameBase) return sameBase.file.file;
   }
-  return item.textures[0].file.file;
+  return textures[0].file.file;
 }
 
-function setGroupTransform(group: any, transform: ManualTransform, eixoPT: boolean): void {
+function setGroupTransform(group: THREE.Group, transform: ManualTransform, eixoPT: boolean): void {
   group.position.set(transform.x, transform.y, transform.z);
   group.rotation.set(
     THREE.MathUtils.degToRad(transform.rx + (eixoPT ? -90 : 0)),
@@ -58,13 +59,82 @@ function setGroupTransform(group: any, transform: ManualTransform, eixoPT: boole
   group.scale.setScalar(transform.scale);
 }
 
+async function buildMeshFromSmd(
+  file: File,
+  textures: TextureMatch[],
+  textureEnabled: boolean,
+  fallbackColor: number,
+  wireframe: boolean,
+  transparent = false,
+  opacity = 1,
+): Promise<{ mesh: THREE.Mesh; triangles: number; vertices: number; objects: number; textureName: string; texturized: boolean }> {
+  const buf = await file.arrayBuffer();
+  const parsed = parseSmd(buf);
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.BufferAttribute(parsed.positions, 3));
+  if (parsed.uvs.length) geometry.setAttribute("uv", new THREE.BufferAttribute(parsed.uvs, 2));
+  geometry.setIndex(new THREE.BufferAttribute(parsed.indices, 1));
+  geometry.computeVertexNormals();
+  geometry.computeBoundingBox();
+  geometry.computeBoundingSphere();
+
+  let texture: THREE.Texture | null = null;
+  const bestTexture = pickBestTexture(textures, parsed.textureNames);
+  if (bestTexture && textureEnabled) {
+    try {
+      texture = await textureFromFile(bestTexture) as THREE.Texture;
+      texture.colorSpace = THREE.SRGBColorSpace;
+      texture.anisotropy = 8;
+      texture.needsUpdate = true;
+    } catch (err) {
+      console.warn("Falha ao carregar textura", bestTexture.name, err);
+      texture = null;
+    }
+  }
+
+  const material = new THREE.MeshStandardMaterial({
+    color: texture ? 0xffffff : fallbackColor,
+    map: texture,
+    roughness: 0.62,
+    metalness: 0.08,
+    side: THREE.DoubleSide,
+    wireframe,
+    transparent,
+    opacity,
+  });
+
+  const mesh = new THREE.Mesh(geometry, material);
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+
+  return {
+    mesh,
+    triangles: parsed.indices.length / 3,
+    vertices: parsed.positions.length / 3,
+    objects: parsed.objectCount,
+    textureName: bestTexture?.name || parsed.textureName || "sem textura",
+    texturized: Boolean(texture),
+  };
+}
+
+function disposeObject(object: THREE.Object3D) {
+  object.traverse(obj => {
+    if (obj instanceof THREE.Mesh) {
+      obj.geometry.dispose();
+      if (Array.isArray(obj.material)) obj.material.forEach(m => m.dispose());
+      else obj.material.dispose();
+    }
+  });
+}
+
 export function SMDViewer({ item }: Props) {
   const mountRef = useRef<HTMLDivElement | null>(null);
-  const rendererRef = useRef<any | null>(null);
-  const sceneRef = useRef<any | null>(null);
-  const cameraRef = useRef<any | null>(null);
-  const controlsRef = useRef<any>(null);
-  const modelGroupRef = useRef<any | null>(null);
+  const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
+  const sceneRef = useRef<THREE.Scene | null>(null);
+  const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
+  const controlsRef = useRef<OrbitControls | null>(null);
+  const rootGroupRef = useRef<THREE.Group | null>(null);
+  const itemGroupRef = useRef<THREE.Group | null>(null);
   const frameRef = useRef<number | null>(null);
 
   const [textureEnabled, setTextureEnabled] = useState(true);
@@ -73,6 +143,7 @@ export function SMDViewer({ item }: Props) {
   const [axes, setAxes] = useState(false);
   const [eixoPT, setEixoPT] = useState(true);
   const [showManual, setShowManual] = useState(true);
+  const [showBase, setShowBase] = useState(true);
   const [transform, setTransform] = useState<ManualTransform>(DEFAULT_TRANSFORM);
   const [loading, setLoading] = useState(false);
   const [loadingText, setLoadingText] = useState("");
@@ -80,22 +151,28 @@ export function SMDViewer({ item }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [stats, setStats] = useState<ViewerStats | null>(null);
 
-  const selectedTextureName = useMemo(() => item?.textures[0]?.file.name || "", [item]);
+  const modeLabel = useMemo(() => {
+    if (!item) return "Montagem";
+    if (item.itemType === "hair") return "Montagem Hair";
+    if (item.itemType === "armor") return "Montagem Armor";
+    if (item.itemType === "costume") return "Montagem Traje";
+    return "Montagem";
+  }, [item]);
 
   useEffect(() => {
     const mount = mountRef.current;
     if (!mount) return;
 
-    const scene = new (THREE as any).Scene();
+    const scene = new THREE.Scene();
     scene.background = null;
     scene.fog = new THREE.Fog(0x050816, 80, 180);
     sceneRef.current = scene;
 
-    const camera = new (THREE as any).PerspectiveCamera(38, 1, 0.1, 5000);
+    const camera = new THREE.PerspectiveCamera(38, 1, 0.1, 5000);
     camera.position.set(0, 10, 34);
     cameraRef.current = camera;
 
-    const renderer = new (THREE as any).WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     renderer.shadowMap.enabled = true;
@@ -112,8 +189,7 @@ export function SMDViewer({ item }: Props) {
     controls.maxDistance = 1200;
     controlsRef.current = controls;
 
-    const hemi = new THREE.HemisphereLight(0xdde8ff, 0x111018, 1.35);
-    scene.add(hemi);
+    scene.add(new THREE.HemisphereLight(0xdde8ff, 0x111018, 1.35));
     const key = new THREE.DirectionalLight(0xffffff, 2.4);
     key.position.set(18, 24, 20);
     key.castShadow = true;
@@ -155,6 +231,7 @@ export function SMDViewer({ item }: Props) {
     ro.observe(mount);
 
     const tick = () => {
+      controls.autoRotate = false;
       controls.update();
       renderer.render(scene, camera);
       frameRef.current = requestAnimationFrame(tick);
@@ -179,15 +256,15 @@ export function SMDViewer({ item }: Props) {
   }, [axes, grid]);
 
   useEffect(() => {
-    if (modelGroupRef.current) setGroupTransform(modelGroupRef.current, transform, eixoPT);
+    if (itemGroupRef.current) setGroupTransform(itemGroupRef.current, transform, eixoPT);
   }, [transform, eixoPT]);
 
   useEffect(() => {
-    const group = modelGroupRef.current;
-    if (!group) return;
-    group.traverse((obj: any) => {
+    const root = rootGroupRef.current;
+    if (!root) return;
+    root.traverse(obj => {
       if (obj instanceof THREE.Mesh) {
-        const material = obj.material as any;
+        const material = obj.material as THREE.MeshStandardMaterial;
         material.wireframe = wireframe;
         material.needsUpdate = true;
       }
@@ -195,122 +272,102 @@ export function SMDViewer({ item }: Props) {
   }, [wireframe]);
 
   useEffect(() => {
+    const root = rootGroupRef.current;
+    if (!root) return;
+    const base = root.getObjectByName("baseCharacter");
+    if (base) base.visible = showBase;
+  }, [showBase]);
+
+  useEffect(() => {
     let cancelled = false;
     async function load() {
       const scene = sceneRef.current;
       if (!scene || !item) return;
       setLoading(true);
-      setLoadingText("Lendo SMD");
-      setLoadingProgress(8);
+      setLoadingText("Preparando montagem");
+      setLoadingProgress(6);
       setError(null);
       setStats(null);
       setTransform(DEFAULT_TRANSFORM);
-      controlsRef.current && (controlsRef.current.autoRotate = false);
+      if (controlsRef.current) controlsRef.current.autoRotate = false;
 
-      if (modelGroupRef.current) {
-        scene.remove(modelGroupRef.current);
-        modelGroupRef.current.traverse((obj: any) => {
-          if (obj instanceof THREE.Mesh) {
-            obj.geometry.dispose();
-            if (Array.isArray(obj.material)) obj.material.forEach((m: any) => m.dispose());
-            else obj.material.dispose();
-          }
-        });
-        modelGroupRef.current = null;
+      if (rootGroupRef.current) {
+        scene.remove(rootGroupRef.current);
+        disposeObject(rootGroupRef.current);
+        rootGroupRef.current = null;
+        itemGroupRef.current = null;
       }
 
       try {
-        const buf = await item.smd.file.arrayBuffer();
-        if (cancelled) return;
-        setLoadingText("Interpretando malha");
-        setLoadingProgress(28);
-        const mesh = parseSmd(buf);
-        if (cancelled) return;
+        const root = new THREE.Group();
+        root.name = "mountRoot";
 
-        const geometry = new THREE.BufferGeometry();
-        geometry.setAttribute("position", new THREE.BufferAttribute(mesh.positions, 3));
-        if (mesh.uvs.length) geometry.setAttribute("uv", new THREE.BufferAttribute(mesh.uvs, 2));
-        geometry.setIndex(new THREE.BufferAttribute(mesh.indices, 1));
-        geometry.computeVertexNormals();
-        geometry.computeBoundingBox();
-        geometry.computeBoundingSphere();
-
-        setLoadingText("Procurando textura do pacote");
-        setLoadingProgress(58);
-        let texture: any | null = null;
-        const bestTexture = pickBestTexture(item, mesh.textureNames);
-        if (bestTexture && textureEnabled) {
-          setLoadingText(`Carregando textura ${bestTexture.name}`);
-          setLoadingProgress(74);
-          try {
-            texture = await textureFromFile(bestTexture) as any;
-            texture.colorSpace = THREE.SRGBColorSpace;
-            texture.anisotropy = 8;
-            texture.needsUpdate = true;
-          } catch (texErr) {
-            console.warn("Falha ao carregar textura", texErr);
-            texture = null;
-          }
+        let baseInfo: Awaited<ReturnType<typeof buildMeshFromSmd>> | null = null;
+        const base: CharacterBaseCandidate | null = item.baseCharacter;
+        if (base) {
+          setLoadingText(`Carregando base ${base.smd.name}`);
+          setLoadingProgress(24);
+          baseInfo = await buildMeshFromSmd(base.smd.file, base.textures, textureEnabled, 0x303a55, wireframe, true, 0.34);
+          if (cancelled) return;
+          baseInfo.mesh.name = "baseCharacter";
+          root.add(baseInfo.mesh);
         }
 
-        setLoadingText("Aplicando material");
-        setLoadingProgress(88);
-        const material = new (THREE as any).MeshStandardMaterial({
-          color: texture ? 0xffffff : 0xaebcff,
-          map: texture || null,
-          roughness: 0.58,
-          metalness: 0.12,
-          side: THREE.DoubleSide,
-          wireframe,
-        });
+        setLoadingText(`Carregando ${item.displayName}`);
+        setLoadingProgress(56);
+        const itemInfo = await buildMeshFromSmd(item.smd.file, item.textures, textureEnabled, 0xaebcff, wireframe, false, 1);
+        if (cancelled) return;
 
-        const renderMesh = new THREE.Mesh(geometry, material);
-        renderMesh.castShadow = true;
-        renderMesh.receiveShadow = true;
+        const itemGroup = new THREE.Group();
+        itemGroup.name = "itemMount";
+        itemGroup.add(itemInfo.mesh);
+        setGroupTransform(itemGroup, DEFAULT_TRANSFORM, eixoPT);
+        root.add(itemGroup);
+        itemGroupRef.current = itemGroup;
 
-        const group = new (THREE as any).Group();
-        group.add(renderMesh);
-        setGroupTransform(group, DEFAULT_TRANSFORM, eixoPT);
-        scene.add(group);
-        modelGroupRef.current = group;
+        scene.add(root);
+        rootGroupRef.current = root;
+        fitCameraToObject(root);
 
-        fitCameraToObject(group);
-        const box = new (THREE as any).Box3().setFromObject(group);
+        const box = new THREE.Box3().setFromObject(root);
         setStats({
-          triangles: mesh.indices.length / 3,
-          vertices: mesh.positions.length / 3,
-          objects: mesh.objectCount,
+          triangles: itemInfo.triangles + (baseInfo?.triangles ?? 0),
+          vertices: itemInfo.vertices + (baseInfo?.vertices ?? 0),
+          objects: itemInfo.objects + (baseInfo?.objects ?? 0),
           bounds: boundsText(box),
-          texture: bestTexture?.name || mesh.textureName || "sem textura",
-          status: texture ? "texturizado" : bestTexture ? "textura falhou" : "sem textura",
+          texture: itemInfo.textureName,
+          status: itemInfo.texturized ? "texturizado" : item.textures.length ? "textura falhou" : "sem textura",
+          base: base?.smd.name ?? "base não encontrada",
         });
+        setLoadingText("Finalizando preview");
         setLoadingProgress(100);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Falha ao carregar SMD.");
       } finally {
-        if (!cancelled) setTimeout(() => setLoading(false), 200);
+        if (!cancelled) setTimeout(() => setLoading(false), 150);
       }
     }
     load();
     return () => { cancelled = true; };
   }, [item, textureEnabled]);
 
-  function fitCameraToObject(object: any) {
+  function fitCameraToObject(object: THREE.Object3D) {
     const camera = cameraRef.current;
     const controls = controlsRef.current;
     if (!camera || !controls) return;
-    const box = new (THREE as any).Box3().setFromObject(object);
+    const box = new THREE.Box3().setFromObject(object);
     const size = new THREE.Vector3();
     const center = new THREE.Vector3();
     box.getSize(size);
     box.getCenter(center);
     const maxSize = Math.max(size.x, size.y, size.z, 1);
-    const distance = maxSize * 1.65;
-    camera.position.set(center.x + distance * 0.35, center.y + maxSize * 0.2, center.z + distance);
+    const distance = maxSize * 1.75;
+    camera.position.set(center.x + distance * 0.28, center.y + maxSize * 0.18, center.z + distance);
     controls.target.copy(center);
     camera.near = Math.max(0.01, maxSize / 200);
     camera.far = Math.max(1000, maxSize * 20);
     camera.updateProjectionMatrix();
+    controls.autoRotate = false;
     controls.update();
   }
 
@@ -318,7 +375,7 @@ export function SMDViewer({ item }: Props) {
     const renderer = rendererRef.current;
     if (!renderer) return;
     const a = document.createElement("a");
-    a.download = `${item?.displayName?.replace(/\.[^.]+$/, "") || "alucard-showcase"}.png`;
+    a.download = `${item?.displayName?.replace(/\.[^.]+$/, "") || "alucard-montagem"}.png`;
     a.href = renderer.domElement.toDataURL("image/png");
     a.click();
   }
@@ -329,49 +386,51 @@ export function SMDViewer({ item }: Props) {
 
   return (
     <div className="viewer-stage">
-      <div className="viewer-toolbar">
-        <button className="tool active">Showcase</button>
+      <div className="viewer-toolbar compact-toolbar">
+        <button className="tool active">{modeLabel}</button>
         <button className={`tool ${textureEnabled ? "active" : ""}`} onClick={() => setTextureEnabled(v => !v)}>Textura</button>
+        <button className={`tool ${showBase ? "active" : ""}`} onClick={() => setShowBase(v => !v)} disabled={!item?.baseCharacter}>Base</button>
         <button className={`tool ${wireframe ? "active" : ""}`} onClick={() => setWireframe(v => !v)}>Wireframe</button>
         <button className={`tool ${grid ? "active" : ""}`} onClick={() => setGrid(v => !v)}>Grid</button>
         <button className={`tool ${axes ? "active" : ""}`} onClick={() => setAxes(v => !v)}>Eixos</button>
         <button className={`tool ${eixoPT ? "active" : ""}`} onClick={() => setEixoPT(v => !v)}>Eixo PT</button>
-        <button className="tool" onClick={() => modelGroupRef.current && fitCameraToObject(modelGroupRef.current)}>Centralizar</button>
+        <button className="tool" onClick={() => rootGroupRef.current && fitCameraToObject(rootGroupRef.current)}>Centralizar</button>
         <button className={`tool ${showManual ? "active" : ""}`} onClick={() => setShowManual(v => !v)}>Ajuste manual</button>
         <button className="tool export" onClick={exportPng} disabled={!item}>Exportar PNG</button>
       </div>
 
       <div ref={mountRef} className="canvas-host" />
-      <LoadingOverlay show={loading} title="Loading 3D model" text={loadingText} progress={loadingProgress} />
+      <LoadingOverlay show={loading} title="Montando preview" text={loadingText} progress={loadingProgress} />
 
       {!item && (
         <div className="empty-viewer">
-          <div className="viewer-orb">3D</div>
-          <h2>Abra a pasta tmABCD ou um pacote de item</h2>
-          <p>O sistema vai montar pacotes usando o SMD principal e atÃ© 4 texturas relacionadas.</p>
+          <div className="viewer-orb">PT</div>
+          <h2>Selecione Hair, Armor ou Traje</h2>
+          <p>O sistema monta o pacote com SMD + texturas e tenta aplicar sobre a base da classe encontrada na tmABCD.</p>
         </div>
       )}
 
       {error && <div className="viewer-error"><b>Erro ao abrir modelo</b><span>{error}</span></div>}
 
       {item && stats && (
-        <div className="showcase-card">
-          <span className="kicker">ALUCARD-TOOLS SHOWCASE</span>
+        <div className="showcase-card compact-card">
+          <span className="kicker">ALUCARD-TOOLS MONTAGEM</span>
           <h2>{item.displayName}</h2>
           <p>{item.smd.path}</p>
           <div className="showcase-stats">
-            <div><b>{stats.triangles.toLocaleString("pt-BR")}</b><span>triÃ¢ngulos</span></div>
-            <div><b>{stats.vertices.toLocaleString("pt-BR")}</b><span>vÃ©rtices</span></div>
-            <div><b>{stats.objects}</b><span>objetos</span></div>
+            <div><b>{stats.triangles.toLocaleString("pt-BR")}</b><span>triângulos</span></div>
+            <div><b>{stats.vertices.toLocaleString("pt-BR")}</b><span>vértices</span></div>
+            <div><b>{item.className}</b><span>classe</span></div>
             <div><b>{stats.bounds}</b><span>bounds</span></div>
           </div>
           <div className={`texture-status ${stats.status === "texturizado" ? "ok" : "warn"}`}>Textura: {stats.texture}</div>
+          <div className={`texture-status ${item.baseCharacter ? "ok" : "warn"}`}>Base: {stats.base}</div>
         </div>
       )}
 
       {showManual && item && (
         <div className="manual-panel">
-          <div className="section-head"><h2>Ajuste manual</h2><button onClick={() => setTransform(DEFAULT_TRANSFORM)}>Reset</button></div>
+          <div className="section-head"><h2>Ajuste do item</h2><button onClick={() => setTransform(DEFAULT_TRANSFORM)}>Reset</button></div>
           <Control label="X" min={-80} max={80} step={0.1} value={transform.x} onChange={v => updateTransform("x", v)} />
           <Control label="Y" min={-80} max={80} step={0.1} value={transform.y} onChange={v => updateTransform("y", v)} />
           <Control label="Z" min={-80} max={80} step={0.1} value={transform.z} onChange={v => updateTransform("z", v)} />
@@ -382,7 +441,7 @@ export function SMDViewer({ item }: Props) {
         </div>
       )}
 
-      <div className="hint-row"><span>Arraste para girar cÃ¢mera</span><span>Scroll para zoom</span><span>Objeto inicia parado</span></div>
+      <div className="hint-row"><span>Arraste para girar câmera</span><span>Scroll para zoom</span><span>Objeto inicia parado</span></div>
     </div>
   );
 }
@@ -396,7 +455,3 @@ function Control({ label, value, min, max, step, onChange }: { label: string; va
     </label>
   );
 }
-
-
-
-

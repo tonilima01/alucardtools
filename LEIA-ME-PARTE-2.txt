@@ -1,0 +1,5 @@
+ALUCARD-TOOLS - PARTE 2/2
+
+Esta parte contem o restante dos personagens.
+Extraia esta parte no mesmo local onde voce extraiu a PARTE 1.
+Aceite mesclar/substituir pastas se o Windows perguntar.

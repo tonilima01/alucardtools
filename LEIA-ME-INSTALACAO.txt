@@ -1,0 +1,6 @@
+ALUCARD-TOOLS - PACOTE BASE
+
+1) Extraia este ZIP primeiro.
+2) Extraia todos os ZIPs alucard-tools-characters-*.zip na MESMA pasta raiz.
+3) Quando o Windows perguntar, escolha Mesclar/Substituir pastas.
+4) Depois suba a pasta completa para GitHub/Vercel.

@@ -1,30 +1,42 @@
-# ALUCARD-TOOLS · Item Package Studio
+# ALUCARD-TOOLS — Hair / Armor / Trajes Studio
 
-Viewer profissional para arquivos SMD do PristonTale.
+Versão focada somente em Hair, Armor e Trajes/Costumes do PristonTale.
 
-## Fluxo correto
+## O que faz
 
-1. Clique em **Abrir tmABCD / pasta do cliente**.
-2. Selecione a pasta inteira `tmABCD` ou uma pasta menor com o item.
-3. O sistema monta pacotes: `.smd + 1 a 4 texturas`.
-4. Pesquise por código, exemplo `itws`, `itwd`, `da399`, `hair`, `shield`.
-5. Clique no pacote e veja no painel direito quais arquivos formam o item.
-6. Ajuste posição, rotação, escala e exporte PNG.
+- Lê a pasta `tmABCD` localmente no navegador.
+- Indexa `.smd` e texturas `.bmp`, `.tga`, `.dds`, `.png`, `.jpg`.
+- Mostra somente pacotes de:
+  - Hair / cabeça
+  - Armor / corpo
+  - Trajes / costumes
+- Remove arma, escudo e asa do fluxo principal.
+- Monta o pacote lógico do item:
+  - SMD principal
+  - até 4 texturas relacionadas
+  - arquivos relacionados
+  - classe provável
+  - base de personagem encontrada
+- Tenta carregar uma base de personagem da classe detectada quando ela existe na pasta carregada.
+- Abre o modelo parado, sem auto giro.
+- Possui ajuste manual de posição, rotação e escala.
+- Exporta PNG.
 
-## Privacidade
+## Importante
 
-Os arquivos são lidos localmente no navegador. Nada é enviado para servidor.
+A montagem usa o parser SMD atual em Three.js e faz uma montagem visual por base + item. Para ficar 100% idêntico ao client PristonTale em todos os casos, ainda seria necessário portar a lógica completa de bones/physique/hierarquia do client original.
 
-## Instalação
+## Comandos
 
-```bash
-pnpm install
-pnpm run build
+```powershell
+npm install --include=optional
+npm run build
 ```
 
-ou
+## Deploy
 
-```bash
-npm install
-npm run build
+```powershell
+git add .
+git commit -m "add hair armor costume mount studio"
+git push origin main
 ```

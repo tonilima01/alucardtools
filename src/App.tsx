@@ -21,7 +21,7 @@ export default function App() {
   const { packages, stats, loading, progressText, progress, error, importFiles, clear } = useClientLibrary();
   const [selected, setSelected] = useState<ItemPackage | null>(null);
   const [query, setQuery] = useState("");
-  const [filter, setFilter] = useState<ItemType | "todos" | "completo">("todos");
+  const [filter, setFilter] = useState<ItemType | "todos" | "completo" | "sem-base">("todos");
   const [dragging, setDragging] = useState(false);
 
   const selectedStillExists = useMemo(() => selected && packages.some(p => p.id === selected.id), [packages, selected]);
@@ -62,13 +62,13 @@ export default function App() {
           <div className="brand-mark">AT</div>
           <div>
             <h1>ALUCARD-TOOLS</h1>
-            <p>Item Package Studio para SMD do PristonTale · leitura local no navegador</p>
+            <p>Hair / Armor / Trajes Studio para PristonTale · leitura local no navegador</p>
           </div>
         </div>
         <div className="top-actions">
           <button className="action-button primary" onClick={() => folderInputRef.current?.click()}>Abrir tmABCD / pasta do cliente</button>
           <button className="action-button" onClick={() => fileInputRef.current?.click()}>Adicionar arquivos</button>
-          <button className="action-button ghost" onClick={() => alert("Use uma pasta contendo .smd + BMP/TGA/DDS/PNG. O sistema monta pacotes automaticamente e mostra quais arquivos formam cada item.")}>Ajuda</button>
+          <button className="action-button ghost" onClick={() => alert("Use a tmABCD ou uma pasta contendo Hair/Armor/Trajes com SMD + BMP/TGA/DDS/PNG. O sistema monta o pacote e tenta aplicar sobre uma base de personagem da classe detectada.")}>Ajuda</button>
           <button className="action-button danger" onClick={handleClear}>Limpar</button>
         </div>
       </header>
@@ -79,16 +79,16 @@ export default function App() {
       <main className="workspace">
         <aside className="left-panel">
           <div className="stat-grid">
-            <div><strong>{stats.smdCount.toLocaleString("pt-BR")}</strong><span>modelos SMD</span></div>
+            <div><strong>{stats.smdCount.toLocaleString("pt-BR")}</strong><span>pacotes Hair/Armor/Trajes</span></div>
             <div><strong>{stats.textureCount.toLocaleString("pt-BR")}</strong><span>texturas</span></div>
           </div>
 
           <section className="flow-card">
             <div className="section-head"><h2>Fluxo correto</h2><span>local</span></div>
             <ol>
-              <li>Abrir a pasta <b>tmABCD</b> ou a pasta do item.</li>
-              <li>Pesquisar por código: <b>itws</b>, <b>itwd</b>, <b>DA399</b>, <b>hair</b>.</li>
-              <li>Selecionar pacote, ajustar posição e exportar PNG.</li>
+              <li>Abrir a pasta <b>tmABCD</b> ou uma pasta de visual.</li>
+              <li>Filtrar apenas <b>Hair</b>, <b>Armor</b> ou <b>Trajes</b>.</li>
+              <li>Selecionar pacote, conferir base/texturas e exportar PNG.</li>
             </ol>
             <p className="privacy-note">Nada é enviado ao servidor. Os arquivos ficam no PC do cliente.</p>
           </section>
@@ -101,7 +101,7 @@ export default function App() {
             <div className="drop-hero">
               <div className="orb">3D</div>
               <h2>Abra a pasta do cliente</h2>
-              <p>Selecione a <b>tmABCD</b> inteira ou uma pasta menor do item. O sistema cria pacotes com SMD + 1 a 4 texturas automaticamente.</p>
+              <p>Selecione a <b>tmABCD</b> inteira ou uma pasta menor do visual. O sistema cria pacotes somente de Hair, Armor e Trajes, com SMD + 1 a 4 texturas e base de personagem quando encontrada.</p>
               <div className="hero-actions">
                 <button className="action-button primary large" onClick={() => folderInputRef.current?.click()}>Abrir tmABCD</button>
                 <button className="action-button large" onClick={() => fileInputRef.current?.click()}>Adicionar arquivos</button>
