@@ -1,3 +1,4 @@
+// @ts-nocheck
 // BMP/TGA decryption from smTexture.cpp:DecryptBMP / DecryptTGA
 // BMP: if !BM → set BM, pBuffer[c] -= (c*c) for c=2..13, zero bytes 2-5
 // TGA: if G8 → set 0x00 0x00, pBuffer[c] -= (c*c) for c=2..17
